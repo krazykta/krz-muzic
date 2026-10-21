@@ -88,7 +88,7 @@ async function fetchJSON(url, ms = 8000) {
 }
 
 // Coletillas que estorban en el título: (Official Video), [Lyrics], (Video Oficial)…
-const JUNK = /\s*[([](?:official\s*(?:music\s*)?(?:video|audio|visualizer|lyric\s*video)|video\s*oficial|audio\s*oficial|videoclip\s*oficial|lyrics?|letra|hd|4k)[)\]]/gi;
+const JUNK = /\s*[([](?:official\s*(?:music\s*)?(?:video|audio|visualizer|lyric\s*video)|visualizer|lyric\s*video|video\s*lyrics?|video\s*oficial|audio\s*oficial|videoclip\s*oficial|lyrics?|letra|hd|4k)[)\]]/gi;
 
 /** "Artista - Canción (Official Video)" + canal → { title: 'Canción', artist: 'Artista' } */
 export function cleanMeta(title = '', author = '') {

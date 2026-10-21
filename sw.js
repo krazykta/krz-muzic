@@ -3,7 +3,7 @@
 // Estrategia "primero la red": si hay conexión siempre coge la versión nueva
 // (así tus cambios se ven al recargar) y, si no la hay, usa la copia guardada.
 
-const CACHE = 'krz-muzic-v9';
+const CACHE = 'krz-muzic-v10';
 const SHELL = [
   './',
   'index.html',
