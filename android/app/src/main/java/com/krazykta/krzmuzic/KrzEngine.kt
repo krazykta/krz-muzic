@@ -23,6 +23,8 @@ import androidx.media3.exoplayer.source.LoadEventInfo
 import androidx.media3.exoplayer.source.MediaLoadData
 import org.json.JSONObject
 import java.io.IOException
+import java.lang.reflect.InvocationTargetException
+import java.lang.reflect.Proxy
 import java.util.concurrent.Executors
 
 /**
@@ -472,12 +474,22 @@ object KrzEngine {
         override fun seekToPrevious() = KrzEngine.prev()
         override fun seekToPreviousMediaItem() = KrzEngine.prev()
 
-        // Cuando el reproductor real avisa de qué botones hay, añadimos los nuestros
+        /**
+         * Cuando el reproductor real avisa de qué botones hay, añadimos los nuestros; el resto de avisos
+         * (suena, pausa, canción nueva…) pasan tal cual. Usamos un "proxy" (objeto que Java crea al vuelo y
+         * por el que pasan TODOS los métodos) porque `Player.Listener by listener` de Kotlin no reenvía los
+         * métodos "default" de Java: se perdían esos avisos y Media3 creía que no sonaba nada (sin notificación).
+         */
         override fun addListener(listener: Player.Listener) {
-            val w = object : Player.Listener by listener {
-                override fun onAvailableCommandsChanged(availableCommands: Player.Commands) =
-                    listener.onAvailableCommandsChanged(augment(availableCommands))
-            }
+            val w = Proxy.newProxyInstance(Player.Listener::class.java.classLoader, arrayOf(Player.Listener::class.java)) { proxy, m, args ->
+                when (m.name) {
+                    "equals" -> proxy === args?.get(0)
+                    "hashCode" -> System.identityHashCode(proxy)
+                    "toString" -> "KrzListener($listener)"
+                    "onAvailableCommandsChanged" -> listener.onAvailableCommandsChanged(augment(args!![0] as Player.Commands))
+                    else -> try { m.invoke(listener, *(args ?: emptyArray<Any?>())) } catch (e: InvocationTargetException) { throw e.targetException }
+                }
+            } as Player.Listener
             wrappers[listener] = w
             super.addListener(w)
         }

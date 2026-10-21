@@ -29,6 +29,10 @@
   y mira `areNotificationsEnabled` (permiso + interruptor de Ajustes).
 - `PlaybackService.onUpdateNotification` apunta `[SISTEMA] Notificación de música: primer plano …, notificaciones …`
   (o `[ERROR] Android no dejó poner la notificación`). Pedir ese registro al usuario.
+- **Causa encontrada (registro del 21/10, Xiaomi 23078PND5G, Android 16):** `Notificación de música: primer plano no`
+  y nunca cambiaba. `NotificationPlayer` (KrzEngine) envolvía los avisos con `Player.Listener by listener`, y Kotlin no
+  reenvía los métodos "default" de Java: la sesión no se enteraba de que sonaba. Arreglado con un `Proxy` que reenvía todo.
+  Pendiente de probar en el móvil: debe salir `primer plano sí` al sonar.
 - Cápsula: Xiaomi no tiene una API pública documentada; requiere primero que exista la notificación multimedia y,
   en HyperOS 3, permitir la app en Ajustes → Super Island. Sin comprobar.
 
