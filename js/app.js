@@ -336,6 +336,7 @@ function viewHome() {
   });
   return `
     <header class="view-head"><h1 class="title-xl">${greeting()}</h1></header>
+    ${installBanner()}
     ${sliderSection()}
     ${tiles.length ? `<div class="tiles">${tiles.join('')}</div>` : ''}
     ${recoHomeSection()}
@@ -512,6 +513,18 @@ function viewForYou() {
       <section class="block"><h2>Más de ${esc(recoData.topArtist)}</h2>
       <div class="shelf">${recoData.artistPicks.map((t, i) => trackCard(t.id, i, 'play-reco', 'artist')).join('')}</div></section>` : ''}
     <p class="muted-note">Actualizado ${timeAgo(recoData.at)}${recoLoading ? '. Actualizando…' : '.'}</p>`;
+}
+
+// ---------- Aviso de instalación ----------
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+function installBanner() {
+  if (isStandalone() || !installEvt) return '';
+  return `
+    <div class="install-banner">
+      <img src="icons/icon-192.png" alt="">
+      <span><b>Instala KRZ Muzic</b><br>Ábrela como una app, a pantalla completa.</span>
+      <button class="btn btn-primary" data-action="install">Instalar</button>
+    </div>`;
 }
 
 // ---------- Carrusel "Lo que suena" ----------
@@ -1370,7 +1383,7 @@ function bindEvents() {
       case 'clear-search': input().value = ''; input().focus(); updatePop(); break;
       case 'backup': backup(); break;
       case 'install':
-        if (installEvt) { installEvt.prompt(); installEvt.userChoice.finally(() => { installEvt = null; $('#install-btn').hidden = true; }); }
+        if (installEvt) { installEvt.prompt(); installEvt.userChoice.finally(() => { installEvt = null; $('#install-btn').hidden = true; renderView(); }); }
         break;
       default: break;
     }
@@ -1454,6 +1467,7 @@ function bindEvents() {
     e.preventDefault();
     installEvt = e;
     $('#install-btn').hidden = false;
+    if (route.name === 'home') renderView();
   });
   window.addEventListener('appinstalled', () => { $('#install-btn').hidden = true; });
   window.addEventListener('pagehide', saveSession);
