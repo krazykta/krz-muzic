@@ -75,7 +75,8 @@ export async function getPlaylistVideoIds(listId, helperEl) {
 }
 
 // ---------- Título y artista ----------
-async function fetchJSON(url, ms = 8000) {
+/** Pide un JSON y se rinde a los `ms` milisegundos (si no, un servidor caído nos dejaría esperando). */
+export async function fetchJSON(url, ms = 8000) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms);
   try {

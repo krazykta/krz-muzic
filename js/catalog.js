@@ -6,19 +6,21 @@
 // Los dos tienen varios servidores ("instancias") mantenidos por voluntarios. Si uno falla,
 // probamos el siguiente y recordamos el último que funcionó para ir más rápido la próxima vez.
 
-import { cleanMeta } from './youtube.js';
+import { cleanMeta, fetchJSON } from './youtube.js';
 
+// Comprobados el 21/10/2026 entre ~350 candidatos (listas oficiales, Farside, LibRedirect, código en GitHub).
+// wireway.ch y flokinet.to no salen en las listas oficiales. kavin.rocks es el oficial: caído ese día,
+// pero lo dejamos de reserva (falla rápido si sigue caído). Se preguntan de 2 en 2, en este orden.
 const PIPED = [
   'https://api.piped.private.coffee',
+  'https://pipedapi.ducks.party',
+  'https://pipedapi.wireway.ch',
   'https://pipedapi.kavin.rocks',
-  'https://pipedapi.adminforge.de',
-  'https://pipedapi.r4fo.com',
 ];
+// Si caen todos, fromInvidious busca más en la lista pública de Invidious.
 const INVIDIOUS = [
   'https://invidious.f5.si',
-  'https://inv.nadeko.net',
-  'https://yewtu.be',
-  'https://invidious.nerdvpn.de',
+  'https://invidious.flokinet.to',
 ];
 const SERVERS_KEY = 'krz-muzic:servers';
 let discovered = false;
@@ -38,44 +40,37 @@ function order(kind, list) {
   return fav && list.includes(fav) ? [fav, ...list.filter((b) => b !== fav)] : list;
 }
 
-async function fetchJSON(url, ms = 7000) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), ms);
-  try {
-    const res = await fetch(url, { signal: ctrl.signal });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  } finally {
-    clearTimeout(timer);
+/**
+ * Pregunta a los servidores de 2 en 2 y se queda con el primero que conteste bien: si el favorito
+ * va lento o está caído, no esperamos a que se rinda para probar otro. null si ninguno responde.
+ */
+async function firstOk(kind, list, path, ms, isValid) {
+  for (let i = 0; i < list.length; i += 2) {
+    let won = false;
+    try {
+      return await Promise.any(list.slice(i, i + 2).map(async (base) => {
+        const data = await fetchJSON(base + path, ms);
+        if (!isValid(data)) throw new Error('Respuesta inesperada');
+        if (!won) { won = true; prefer(kind, base); }   // el más rápido pasa a ser el favorito
+        return data;
+      }));
+    } catch { /* fallaron los dos: siguiente pareja */ }
   }
+  return null;
 }
 
 async function fromPiped(path, isValid) {
-  let lastError = new Error('Sin servidores de Piped');
-  for (const base of order('piped', PIPED)) {
-    try {
-      const data = await fetchJSON(base + path);
-      if (isValid(data)) { prefer('piped', base); return data; }
-      lastError = new Error('Respuesta inesperada');
-    } catch (err) {
-      lastError = err;
-    }
-  }
-  throw lastError;
+  const data = await firstOk('piped', order('piped', PIPED), path, 5000, isValid);
+  if (data) return data;
+  throw new Error('Ningún servidor de Piped responde');
 }
 
-async function fromInvidious(path, isValid) {
+async function fromInvidious(path, isValid, ms = 7000) {
   const tried = new Set();
-  const attempt = async (list) => {
-    for (const base of list) {
-      if (tried.has(base)) continue;
-      tried.add(base);
-      try {
-        const data = await fetchJSON(base + path, 9000);
-        if (isValid(data)) { prefer('invidious', base); return data; }
-      } catch { /* siguiente */ }
-    }
-    return null;
+  const attempt = (list) => {
+    const fresh = list.filter((b) => !tried.has(b));
+    fresh.forEach((b) => tried.add(b));
+    return firstOk('invidious', fresh, path, ms, isValid);
   };
   let data = await attempt(order('invidious', INVIDIOUS));
   if (data) return data;
@@ -193,7 +188,8 @@ const listCache = new Map();
 export function getList(listId) {
   if (listCache.has(listId)) return listCache.get(listId);
   const isAlbum = listId.startsWith('OLAK');
-  const promise = fromInvidious(`/api/v1/playlists/${enc(listId)}`, (d) => d && isArr(d.videos)).then((d) => {
+  // 15 s: las playlists largas tardan (f5.si tardó 8–11 s con una grande el 21/10)
+  const promise = fromInvidious(`/api/v1/playlists/${enc(listId)}`, (d) => d && isArr(d.videos), 15000).then((d) => {
     const tracks = d.videos
       .filter((v) => v.videoId && !DEAD.test(v.title || ''))
       .map((v) => {
