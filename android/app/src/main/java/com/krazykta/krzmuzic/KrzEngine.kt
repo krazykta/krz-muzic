@@ -1,8 +1,12 @@
 package com.krazykta.krzmuzic
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -11,8 +15,14 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.HttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.source.LoadEventInfo
+import androidx.media3.exoplayer.source.MediaLoadData
 import org.json.JSONObject
+import java.io.IOException
 import java.util.concurrent.Executors
 
 /**
@@ -26,13 +36,19 @@ import java.util.concurrent.Executors
  * las próximas canciones ("upcoming"). Así el motor puede pasar de canción él solo aunque la
  * web esté dormida: siempre tiene la siguiente ya preparada detrás de la actual.
  *
+ * Todo lo importante se apunta en KrzLog (el registro), con etiquetas para poder contarlo:
+ *  [CORTE] la música se para porque no tiene datos   [RED] cambios de conexión y fallos de descarga
+ *  [PAUSA] alguien pausó (tú, otra app, auriculares)   [ERROR] fallos graves
+ *  [CARGA] buscar el audio de una canción               [WEB]/[SISTEMA] órdenes y ciclo de vida
+ *
  * Regla de oro: ExoPlayer solo se toca desde el hilo principal ("main").
  */
 @OptIn(UnstableApi::class)
 object KrzEngine {
 
     private val main = Handler(Looper.getMainLooper())
-    private val io = Executors.newSingleThreadExecutor()   // hilo para las peticiones de red
+    private val ioNow = Executors.newSingleThreadExecutor()    // buscar la canción que pides ya
+    private val ioNext = Executors.newSingleThreadExecutor()   // preparar la siguiente, sin estorbar
 
     private var exo: ExoPlayer? = null
     /** El reproductor que ve la notificación (con botones siguiente/anterior siempre activos). */
@@ -45,9 +61,14 @@ object KrzEngine {
     private var current: Track? = null
     private var upcoming: List<Track> = emptyList()
     private var preparedNextId: String? = null
-    private var loadToken = 0       // cada play() nuevo invalida las búsquedas anteriores
-    private var nextToken = 0
-    private var retried = false
+    @Volatile private var loadToken = 0   // cada play() nuevo invalida las búsquedas anteriores
+    @Volatile private var nextToken = 0
+    private var errorRetries = 0          // reintentos tras error en la canción actual
+    private var lastState = Player.STATE_IDLE
+    private var stallStart = 0L           // cuándo empezó el corte actual (0 = no hay corte)
+    private var networkWatched = false
+
+    private const val MAX_ERROR_RETRIES = 3
 
     /** Último estado conocido, para que la web lo consulte al abrirse. */
     @Volatile var snapshot: String = "{}"
@@ -58,7 +79,24 @@ object KrzEngine {
     fun ensure(context: Context): Player {
         sessionPlayer?.let { return it }
         val app = context.applicationContext
+        KrzLog.init(app)
+        watchNetwork(app)
+
+        // Colchón de audio ("buffer"): cuánto descarga por adelantado.
+        // Por defecto ExoPlayer guarda unos 50 s; para música subimos a 1-5 minutos
+        // (son solo 1-5 MB), así un bache de cobertura no se nota.
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                60_000,    // mínimo que intenta tener siempre por delante
+                300_000,   // máximo que descarga por adelantado
+                1_500,     // con cuánto empieza a sonar
+                3_000,     // con cuánto vuelve a sonar tras un corte
+            )
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+
         val player = ExoPlayer.Builder(app)
+            .setLoadControl(loadControl)
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
@@ -70,10 +108,12 @@ object KrzEngine {
             .setWakeMode(C.WAKE_MODE_NETWORK)           // mantiene CPU y wifi despiertos al sonar
             .build()
         player.addListener(events)
+        player.addAnalyticsListener(downloads)
         exo = player
         val wrapped = NotificationPlayer(player)
         sessionPlayer = wrapped
         main.post(ticker)
+        KrzLog.d("[SISTEMA] Motor de audio creado")
         return wrapped
     }
 
@@ -84,6 +124,7 @@ object KrzEngine {
         sessionPlayer = null
         current = null
         preparedNextId = null
+        KrzLog.d("[SISTEMA] Motor de audio apagado")
     }
 
     // ---------------------------------------------------------------- órdenes (desde la web)
@@ -92,21 +133,28 @@ object KrzEngine {
     fun play(track: Track, startSec: Double = 0.0, autoplay: Boolean = true, isRetry: Boolean = false) {
         val token = ++loadToken
         current = track
-        retried = isRetry
+        if (!isRetry) errorRetries = 0
         preparedNextId = null
+        stallStart = 0
+        KrzLog.d("[CARGA] ${if (isRetry) "Reintento" else "Pido"}: ${label(track)}" +
+            if (startSec > 0) " desde ${"%.0f".format(startSec)} s" else "")
         emit("state", JSONObject().put("state", "buffering").put("id", track.id))
-        io.execute {
+        ioNow.execute {
+            val t0 = SystemClock.elapsedRealtime()
             try {
-                val source = StreamResolver.resolve(track)
+                val r = resolveWithRetry(track) { token == loadToken }
+                KrzLog.d("[CARGA] Audio listo en ${SystemClock.elapsedRealtime() - t0} ms (${r.info})")
                 main.post {
                     val p = exo ?: return@post
                     if (token != loadToken) return@post   // mientras tanto pediste otra canción
-                    p.setMediaSource(source, (startSec * 1000).toLong())
+                    p.setMediaSource(r.source, (startSec * 1000).toLong())
                     p.prepare()
                     p.playWhenReady = autoplay
                     prepareNext()
                 }
             } catch (e: Exception) {
+                if (token != loadToken) return@execute
+                KrzLog.d("[ERROR] No se pudo cargar ${label(track)}: ${describe(e)}")
                 main.post {
                     if (token == loadToken) {
                         emit("error", JSONObject().put("id", track.id).put("message", e.message ?: "error"))
@@ -139,6 +187,7 @@ object KrzEngine {
     /** Botón "siguiente" (de la notificación o de la web). */
     fun next() {
         val p = exo ?: return
+        KrzLog.d("[BOTÓN] Siguiente")
         when {
             p.hasNextMediaItem() -> p.seekToNextMediaItem()           // ya estaba preparada: al instante
             upcoming.isNotEmpty() -> {                                 // aún no: la buscamos
@@ -154,10 +203,33 @@ object KrzEngine {
     /** Botón "anterior": si llevas más de 3 s vuelve al principio; si no, le pide a la web la anterior. */
     fun prev() {
         val p = exo ?: return
+        KrzLog.d("[BOTÓN] Anterior")
         if (p.currentPosition > 3000) p.seekTo(0) else emit("prev", JSONObject())
     }
 
     // ---------------------------------------------------------------- internos
+
+    /**
+     * Busca el audio. Si falla por la RED (sin cobertura un momento), espera y lo vuelve a
+     * intentar: 2 s, 4 s y 8 s. Si falla por el VÍDEO (borrado, privado…), no insiste.
+     * Sin esto, un corte de conexión de 5 segundos haría saltar canciones una tras otra.
+     */
+    private fun resolveWithRetry(track: Track, stillWanted: () -> Boolean): StreamResolver.Resolved {
+        var wait = 2_000L
+        var attempt = 1
+        while (true) {
+            try {
+                return StreamResolver.resolve(track)
+            } catch (e: IOException) {
+                if (attempt >= 4 || !stillWanted()) throw e
+                KrzLog.d("[RED] Intento $attempt sin respuesta (${describe(e)}); reintento en ${wait / 1000} s")
+                Thread.sleep(wait)
+                if (!stillWanted()) throw e
+                wait *= 2
+                attempt++
+            }
+        }
+    }
 
     /** Busca y deja preparada la siguiente canción detrás de la actual. */
     private fun prepareNext() {
@@ -166,15 +238,21 @@ object KrzEngine {
         if (preparedNextId == next.id || p.mediaItemCount > p.currentMediaItemIndex + 1) return
         val token = ++nextToken
         val forLoad = loadToken
-        io.execute {
-            val source = try { StreamResolver.resolve(next) } catch (e: Exception) { null }
+        ioNext.execute {
+            val r = try {
+                resolveWithRetry(next) { token == nextToken && forLoad == loadToken }
+            } catch (e: Exception) {
+                KrzLog.d("[CARGA] No se pudo preparar la siguiente (${label(next)}): ${describe(e)}")
+                null
+            }
             main.post {
                 val pl = exo ?: return@post
-                if (source == null || token != nextToken || forLoad != loadToken) return@post
+                if (r == null || token != nextToken || forLoad != loadToken) return@post
                 if (upcoming.firstOrNull()?.id != next.id) return@post
                 if (pl.mediaItemCount > pl.currentMediaItemIndex + 1) return@post
-                pl.addMediaSource(source)
+                pl.addMediaSource(r.source)
                 preparedNextId = next.id
+                KrzLog.d("[CARGA] Siguiente preparada: ${label(next)}")
             }
         }
     }
@@ -189,7 +267,8 @@ object KrzEngine {
             current = upcoming.firstOrNull { it.id == id } ?: Track(id)
             if (upcoming.firstOrNull()?.id == id) upcoming = upcoming.drop(1)
             preparedNextId = null
-            retried = false
+            errorRetries = 0
+            KrzLog.d("[CARGA] Paso a la siguiente: ${label(current!!)}")
             // Quitamos de la lista interna las canciones ya terminadas
             val idx = p.currentMediaItemIndex
             if (idx > 0) p.removeMediaItems(0, idx)
@@ -198,20 +277,100 @@ object KrzEngine {
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) = sendState()
+
         override fun onPlaybackStateChanged(state: Int) {
+            val p = exo
+            val now = SystemClock.elapsedRealtime()
+            if (p != null) {
+                if (state == Player.STATE_BUFFERING && lastState == Player.STATE_READY && p.playWhenReady) {
+                    stallStart = now
+                    KrzLog.d("[CORTE] Se ha quedado sin audio descargado en el segundo " +
+                        "${p.currentPosition / 1000} (colchón: ${(p.bufferedPosition - p.currentPosition) / 1000} s)")
+                }
+                if (state == Player.STATE_READY && stallStart > 0) {
+                    KrzLog.d("[CORTE] Vuelve a sonar tras ${"%.1f".format((now - stallStart) / 1000.0)} s parada")
+                    stallStart = 0
+                }
+            }
+            lastState = state
             sendState()
-            if (state == Player.STATE_ENDED) emit("ended", JSONObject())
+            if (state == Player.STATE_ENDED) {
+                KrzLog.d("[CARGA] Fin: no hay más canciones preparadas")
+                emit("ended", JSONObject())
+            }
+        }
+
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            val why = when (reason) {
+                Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST -> "botón (app, notificación o auriculares)"
+                Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS -> "otra app ha cogido el audio (vídeo, llamada, otra música)"
+                Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY -> "auriculares o altavoz bluetooth desconectados"
+                Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE -> "control remoto"
+                Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM -> "fin de la canción"
+                else -> "motivo $reason"
+            }
+            KrzLog.d("[PAUSA] ${if (playWhenReady) "Reproducir" else "Pausa"}: $why")
+        }
+
+        override fun onPlaybackSuppressionReasonChanged(reason: Int) {
+            if (reason == Player.PLAYBACK_SUPPRESSION_REASON_NONE) {
+                KrzLog.d("[PAUSA] Fin del silencio temporal")
+            } else {
+                KrzLog.d("[PAUSA] Silencio temporal: otra app usa el audio un momento (aviso, asistente, llamada…)")
+            }
         }
 
         override fun onPlayerError(error: PlaybackException) {
             val p = exo
             val cur = current
-            // Las direcciones de YouTube caducan: si falla, volvemos a pedirla una vez
-            if (!retried && cur != null && p != null) {
+            KrzLog.d("[ERROR] El reproductor se ha detenido: ${error.errorCodeName} — ${describe(error)}")
+            // Las direcciones de YouTube caducan y la red falla: volvemos a pedirla (hasta 3 veces)
+            if (errorRetries < MAX_ERROR_RETRIES && cur != null && p != null) {
+                errorRetries++
                 play(cur, p.currentPosition / 1000.0, autoplay = true, isRetry = true)
                 return
             }
             emit("error", JSONObject().put("id", cur?.id ?: "").put("message", error.errorCodeName))
+        }
+    }
+
+    /** Escucha las descargas: cada trozo que falla (ExoPlayer lo reintenta solo). */
+    private val downloads = object : AnalyticsListener {
+        override fun onLoadError(
+            eventTime: AnalyticsListener.EventTime,
+            loadEventInfo: LoadEventInfo,
+            mediaLoadData: MediaLoadData,
+            error: IOException,
+            wasCanceled: Boolean,
+        ) {
+            KrzLog.d("[RED] Falló la descarga de un trozo (se reintenta): ${describe(error)}")
+        }
+    }
+
+    /** Apunta en el registro cuándo cambia la conexión (wifi ↔ datos, sin cobertura…). */
+    private fun watchNetwork(app: Context) {
+        if (networkWatched) return
+        networkWatched = true
+        try {
+            val cm = app.getSystemService(ConnectivityManager::class.java) ?: return
+            cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    val caps = cm.getNetworkCapabilities(network)
+                    val kind = when {
+                        caps == null -> "red"
+                        caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
+                        caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "datos móviles"
+                        else -> "otra red"
+                    }
+                    KrzLog.d("[RED] Conectado a $kind")
+                }
+
+                override fun onLost(network: Network) {
+                    KrzLog.d("[RED] Conexión perdida")
+                }
+            })
+        } catch (e: Exception) {
+            KrzLog.d("[SISTEMA] No se pudo vigilar la red: ${e.message}")
         }
     }
 
@@ -247,6 +406,22 @@ object KrzEngine {
 
     private fun emit(type: String, data: JSONObject) {
         listener?.invoke(type, data.toString())
+    }
+
+    private fun label(t: Track) = "«${t.title ?: t.id}»"
+
+    /** Resume un error y sus causas en una línea (p. ej. "HTTP 403 ← InvalidResponseCodeException"). */
+    fun describe(e: Throwable): String {
+        val parts = mutableListOf<String>()
+        var c: Throwable? = e
+        while (c != null && parts.size < 4) {
+            parts += when (c) {
+                is HttpDataSource.InvalidResponseCodeException -> "HTTP ${c.responseCode}"
+                else -> "${c.javaClass.simpleName}${c.message?.let { ": ${it.take(120)}" } ?: ""}"
+            }
+            c = c.cause
+        }
+        return parts.joinToString(" ← ")
     }
 
     /**

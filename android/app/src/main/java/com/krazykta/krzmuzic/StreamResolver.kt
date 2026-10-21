@@ -8,6 +8,7 @@ import androidx.media3.exoplayer.dash.DefaultDashChunkSource
 import androidx.media3.exoplayer.dash.manifest.DashManifestParser
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.localization.ContentCountry
@@ -26,6 +27,9 @@ data class Track(
     val artist: String? = null,
     val thumb: String? = null,
 )
+
+/** El vídeo no se puede reproducir (privado, borrado, sin audio…). Reintentar no sirve. */
+class ContentError(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /**
  * StreamResolver — convierte un id de YouTube en algo que ExoPlayer puede reproducir.
@@ -52,6 +56,13 @@ object StreamResolver {
         }
     }
 
+    /** Resultado: lo que reproduce ExoPlayer + una descripción para el registro. */
+    class Resolved(val source: MediaSource, val info: String)
+
+    // Si falla la descarga de un trozo (p. ej. un bache de cobertura), ExoPlayer lo reintenta
+    // hasta 8 veces antes de rendirse (por defecto son 3). Mientras, sigue sonando lo ya descargado.
+    private val patientRetries = DefaultLoadErrorHandlingPolicy(8)
+
     // "Fuentes de datos": cómo descarga ExoPlayer los trozos de audio de YouTube.
     // range=true → pide los trozos con el parámetro &range= que usa YouTube; rn → número de petición.
     private val dashFactory by lazy {
@@ -59,28 +70,36 @@ object StreamResolver {
             .setRangeParameterEnabled(true)
             .setRnParameterEnabled(true)
         DashMediaSource.Factory(DefaultDashChunkSource.Factory(ds), ds)
+            .setLoadErrorHandlingPolicy(patientRetries)
     }
     private val progressiveFactory by lazy {
         val ds = YoutubeHttpDataSource.Factory()
             .setRangeParameterEnabled(false)
             .setRnParameterEnabled(true)
         ProgressiveMediaSource.Factory(ds)
+            .setLoadErrorHandlingPolicy(patientRetries)
     }
 
-    @Throws(IOException::class)
-    fun resolve(track: Track): MediaSource {
+    /**
+     * Lanza IOException si es un problema de red (merece la pena reintentar)
+     * o ContentError si el vídeo en sí no se puede reproducir.
+     */
+    fun resolve(track: Track): Resolved {
         ensureInit()
         val info = try {
             StreamInfo.getInfo(ServiceList.YouTube, "https://www.youtube.com/watch?v=${track.id}")
+        } catch (e: IOException) {
+            throw e
         } catch (e: Exception) {
-            throw IOException("No se pudo leer el vídeo: ${e.message}", e)
+            throw ContentError("${e.javaClass.simpleName}: ${e.message}", e)
         }
 
         val audio = info.audioStreams.filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
         // Algunos vídeos traen varias pistas (doblajes): preferimos la original
         val original = audio.filter { it.audioTrackType == null || it.audioTrackType == AudioTrackType.ORIGINAL }
         val best = original.ifEmpty { audio }.maxByOrNull { it.averageBitrate }
-            ?: throw IOException("Este vídeo no tiene pista de audio disponible")
+            ?: throw ContentError("Este vídeo no tiene pista de audio disponible")
+        val desc = "${best.format?.name ?: "?"} ${best.averageBitrate} kbps"
 
         // Datos para la notificación y la pantalla de bloqueo
         val meta = MediaMetadata.Builder()
@@ -101,10 +120,10 @@ object StreamResolver {
             val parsed = DashManifestParser().parse(
                 Uri.parse(""), ByteArrayInputStream(manifest.toByteArray(Charsets.UTF_8)),
             )
-            dashFactory.createMediaSource(parsed, item)
+            Resolved(dashFactory.createMediaSource(parsed, item), "$desc, por trozos (DASH)")
         } catch (e: Exception) {
             // Plan B: reproducirlo como un archivo normal
-            progressiveFactory.createMediaSource(item)
+            Resolved(progressiveFactory.createMediaSource(item), "$desc, archivo completo")
         }
     }
 }

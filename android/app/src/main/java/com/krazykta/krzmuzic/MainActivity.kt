@@ -62,6 +62,7 @@ class MainActivity : AppCompatActivity() {
 
         // Preparamos el motor y conectamos sus eventos con la web
         KrzEngine.ensure(this)
+        KrzLog.d("[SISTEMA] App abierta")
         KrzEngine.listener = { type, data ->
             main.post {
                 web.evaluateJavascript(
@@ -82,7 +83,12 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
+    // La pantalla se ve / deja de verse (bloqueo, cambiar de app…): útil para cruzarlo con los cortes
+    override fun onStart() { super.onStart(); KrzLog.d("[SISTEMA] Pantalla de la app visible") }
+    override fun onStop() { KrzLog.d("[SISTEMA] App en segundo plano o pantalla bloqueada"); super.onStop() }
+
     override fun onDestroy() {
+        KrzLog.d("[SISTEMA] App cerrada")
         KrzEngine.listener = null
         web.destroy()
         super.onDestroy()
@@ -142,13 +148,31 @@ class MainActivity : AppCompatActivity() {
             main.post { KrzEngine.setUpcoming(list) }
         }
 
-        @JavascriptInterface fun pause() { main.post { KrzEngine.pause() } }
-        @JavascriptInterface fun resume() { main.post { startPlaybackService(); KrzEngine.resume() } }
-        @JavascriptInterface fun seek(sec: Double) { main.post { KrzEngine.seek(sec) } }
+        @JavascriptInterface fun pause() { KrzLog.d("[WEB] Pausa"); main.post { KrzEngine.pause() } }
+        @JavascriptInterface fun resume() { KrzLog.d("[WEB] Reanudar"); main.post { startPlaybackService(); KrzEngine.resume() } }
+        @JavascriptInterface fun seek(sec: Double) { KrzLog.d("[WEB] Saltar al segundo ${sec.toInt()}"); main.post { KrzEngine.seek(sec) } }
         @JavascriptInterface fun next() { main.post { KrzEngine.next() } }
         @JavascriptInterface fun setVolume(v: Int) { main.post { KrzEngine.setVolume(v) } }
         @JavascriptInterface fun setRepeatOne(on: Boolean) { main.post { KrzEngine.setRepeatOne(on) } }
         @JavascriptInterface fun stop() { main.post { KrzEngine.stop() } }
+
+        // ---- Diagnóstico ----
+        /** Devuelve el registro completo (texto). */
+        @JavascriptInterface fun getLog(): String = KrzLog.read()
+        @JavascriptInterface fun clearLog() { KrzLog.clear() }
+        /** Abre el menú "Compartir" de Android con el registro (WhatsApp, correo, etc.). */
+        @JavascriptInterface fun share(text: String) {
+            main.post {
+                val send = Intent(Intent.ACTION_SEND)
+                    .setType("text/plain")
+                    .putExtra(Intent.EXTRA_SUBJECT, "Registro de KRZ Muzic")
+                    .putExtra(Intent.EXTRA_TEXT, text)
+                startActivity(Intent.createChooser(send, "Enviar registro"))
+            }
+        }
+        /** Datos del móvil para el informe. */
+        @JavascriptInterface fun deviceInfo(): String =
+            "${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

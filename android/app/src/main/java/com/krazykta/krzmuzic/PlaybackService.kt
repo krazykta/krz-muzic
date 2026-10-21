@@ -25,6 +25,7 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         val player = KrzEngine.ensure(this)
+        KrzLog.d("[SISTEMA] Servicio de música iniciado")
         // Al tocar la notificación, abrimos la app
         val open = PendingIntent.getActivity(
             this, 0,
@@ -42,10 +43,12 @@ class PlaybackService : MediaSessionService() {
     /** Si cierras la app deslizándola y no está sonando nada, apagamos el servicio. */
     override fun onTaskRemoved(rootIntent: Intent?) {
         val p = session?.player
+        KrzLog.d("[SISTEMA] App quitada de recientes")
         if (p == null || !p.playWhenReady || p.mediaItemCount == 0) stopSelf()
     }
 
     override fun onDestroy() {
+        KrzLog.d("[SISTEMA] Servicio de música detenido")
         session?.release()
         session = null
         KrzEngine.release()
