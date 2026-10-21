@@ -2,15 +2,21 @@ package com.krazykta.krzmuzic
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.PictureInPictureParams
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
+import android.provider.Settings
+import android.util.Rational
 import android.webkit.JavascriptInterface
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -18,6 +24,8 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 
 /**
@@ -41,6 +49,33 @@ class MainActivity : AppCompatActivity() {
         const val APP_HOST = "krazykta.github.io"
     }
 
+    // ---- Copia de seguridad ----
+    // El WebView no sabe descargar archivos ni abrir el selector de archivos por su cuenta:
+    // se lo hacemos nosotros con el selector de Android (sin pedir permisos de almacenamiento).
+
+    /** Guardar: Android pregunta dónde y con qué nombre; luego escribimos ahí la copia. */
+    private var pendingBackup: String? = null
+    private val saveBackup = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        val json = pendingBackup
+        pendingBackup = null
+        if (uri == null || json == null) return@registerForActivityResult   // has cancelado
+        try {
+            contentResolver.openOutputStream(uri)?.use { it.write(json.toByteArray(Charsets.UTF_8)) }
+            KrzLog.d("[SISTEMA] Copia de seguridad guardada (${json.length / 1024} KB)")
+            Toast.makeText(this, "Copia guardada", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            KrzLog.d("[ERROR] No se pudo guardar la copia de seguridad: ${e.message}")
+            Toast.makeText(this, "No se pudo guardar la copia", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /** Restaurar: la web pide un archivo (<input type="file">) y se lo damos con el selector de Android. */
+    private var fileCallback: ValueCallback<Array<Uri>>? = null
+    private val pickFile = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        fileCallback?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(r.resultCode, r.data))
+        fileCallback = null
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,7 +90,21 @@ class MainActivity : AppCompatActivity() {
             settings.userAgentString = settings.userAgentString + " KRZMuzicApp/2"
             // El puente: en la web aparecerá como window.KRZNative
             addJavascriptInterface(KrzBridge(), "KRZNative")
-            webChromeClient = WebChromeClient()
+            webChromeClient = object : WebChromeClient() {
+                override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
+                    fileCallback?.onReceiveValue(null)   // si había otro selector a medias, lo cancelamos
+                    fileCallback = callback
+                    // "*/*": muchos móviles no marcan los .json como JSON y saldrían en gris; la web ya comprueba el archivo
+                    val pick = Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
+                    return try {
+                        pickFile.launch(pick)
+                        true
+                    } catch (e: Exception) {
+                        fileCallback = null
+                        false
+                    }
+                }
+            }
             webViewClient = KrzWebClient()
         }
         setContentView(web)
@@ -70,7 +119,8 @@ class MainActivity : AppCompatActivity() {
                 )
             }
         }
-        askNotificationPermission()
+        // Solo al abrir de cero (no al girar la pantalla ni al volver de la ventana flotante)
+        if (savedInstanceState == null) checkPermissions()
 
         if (savedInstanceState != null) web.restoreState(savedInstanceState)
         else web.loadUrl(APP_URL)
@@ -87,6 +137,29 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() { super.onStart(); KrzLog.d("[SISTEMA] Pantalla de la app visible") }
     override fun onStop() { KrzLog.d("[SISTEMA] App en segundo plano o pantalla bloqueada"); super.onStop() }
 
+    /**
+     * Sales de la app (botón de inicio o cambias de app) con música sonando: ventana flotante (PiP).
+     * Android solo llama a esto cuando sales tú, no al bloquear la pantalla ni al abrir un enlace.
+     * shortcut: en Android 12+ setAutoEnterEnabled da una animación más suave; usarlo si esta se ve brusca.
+     */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT < 26 || KrzEngine.sessionPlayer?.isPlaying != true) return
+        try {
+            enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(Rational(1, 1)).build())
+        } catch (e: Exception) {
+            // Pasa si has desactivado "Imagen en imagen" para la app en los ajustes
+            KrzLog.d("[SISTEMA] No se pudo abrir la ventana flotante: ${e.message}")
+        }
+    }
+
+    /** Entra o sale de la ventana flotante: la web enseña solo carátula y título (css: html.pip). */
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        KrzLog.d("[SISTEMA] Ventana flotante ${if (isInPictureInPictureMode) "abierta" else "cerrada"}")
+        web.evaluateJavascript("document.documentElement.classList.toggle('pip', $isInPictureInPictureMode)", null)
+    }
+
     override fun onDestroy() {
         KrzLog.d("[SISTEMA] App cerrada")
         KrzEngine.listener = null
@@ -94,13 +167,59 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    /** Android 13+ pide permiso para mostrar notificaciones (la de la música). */
-    private fun askNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+    // ---- Permisos ----
+    // Internet, servicio en segundo plano y ventana flotante los da Android al instalar.
+    // Estos dos no: hay que pedirlos y el usuario dice sí o no en una ventana del sistema.
+
+    /** Notificaciones (Android 13+): sin ellas no sale la notificación con los controles de la música. */
+    private fun hasNotifications() = Build.VERSION.SDK_INT < 33 ||
+        checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
+    /** Batería "sin restricciones": sin esto, HyperOS y otros pueden cortar la música con la pantalla bloqueada. */
+    private fun hasBattery() = getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
+
+    private val notifPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        // Si ya lo negaste dos veces, Android no vuelve a preguntar: te llevamos a los ajustes de notificaciones
+        if (!ok && Build.VERSION.SDK_INT >= 33 && !shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)) {
+            openSettings(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
         }
+        if (!hasBattery()) askBattery()
+    }
+
+    @SuppressLint("BatteryLife")   // app personal fuera de Play Store: podemos pedirlo directamente
+    private fun askBattery() {
+        try {
+            startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+        } catch (e: Exception) {
+            openSettings(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))   // algunos móviles no tienen la ventana directa
+        }
+    }
+
+    private fun openSettings(intent: Intent) {
+        try { startActivity(intent) } catch (e: Exception) {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+        }
+    }
+
+    /** Al abrir: apunta en el registro cómo están los permisos y, si falta alguno, avisa (salvo "No volver a preguntar"). */
+    private fun checkPermissions() {
+        val notif = hasNotifications()
+        val battery = hasBattery()
+        KrzLog.d("[SISTEMA] Permisos: notificaciones ${if (notif) "sí" else "NO"}, batería sin restricciones ${if (battery) "sí" else "NO"}")
+        val prefs = getSharedPreferences("krz", MODE_PRIVATE)
+        if ((notif && battery) || prefs.getBoolean("noPermAsk", false)) return
+
+        val missing = listOfNotNull(
+            if (!notif) "• Notificaciones: para ver y controlar la música desde la barra y la pantalla de bloqueo." else null,
+            if (!battery) "• Batería sin restricciones: para que la música no se corte con la pantalla bloqueada." else null,
+        )
+        AlertDialog.Builder(this)
+            .setTitle("Para que KRZ Muzic funcione bien")
+            .setMessage(missing.joinToString("\n\n") + "\n\nAndroid te preguntará cada uno: pulsa Permitir.")
+            .setPositiveButton("Activar") { _, _ -> if (!notif) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS) else askBattery() }
+            .setNegativeButton("Ahora no", null)
+            .setNeutralButton("No volver a preguntar") { _, _ -> prefs.edit().putBoolean("noPermAsk", true).apply() }
+            .show()
     }
 
     /** Arranca el servicio de música (si ya está arrancado, no pasa nada). */
@@ -124,8 +243,6 @@ class MainActivity : AppCompatActivity() {
      * principal con main.post { … } antes de tocar el reproductor.
      */
     inner class KrzBridge {
-        @JavascriptInterface fun version(): Int = 2
-
         /** Estado actual (para cuando reabres la app con música sonando). */
         @JavascriptInterface fun state(): String = KrzEngine.snapshot
 
@@ -154,7 +271,11 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface fun next() { main.post { KrzEngine.next() } }
         @JavascriptInterface fun setVolume(v: Int) { main.post { KrzEngine.setVolume(v) } }
         @JavascriptInterface fun setRepeatOne(on: Boolean) { main.post { KrzEngine.setRepeatOne(on) } }
-        @JavascriptInterface fun stop() { main.post { KrzEngine.stop() } }
+
+        /** Copia de seguridad: abre "Guardar como" de Android con el nombre propuesto. */
+        @JavascriptInterface fun saveBackup(json: String, name: String) {
+            main.post { pendingBackup = json; saveBackup.launch(name) }
+        }
 
         // ---- Diagnóstico ----
         /** Devuelve el registro completo (texto). */

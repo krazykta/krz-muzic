@@ -1,6 +1,7 @@
 package com.krazykta.krzmuzic
 
 import android.net.Uri
+import android.os.SystemClock
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.exoplayer.dash.DashMediaSource
@@ -80,19 +81,33 @@ object StreamResolver {
             .setLoadErrorHandlingPolicy(patientRetries)
     }
 
+    // Memoria de las últimas 20 canciones: volver a una (atrás, repetir, reanudar tras una pausa larga)
+    // no pregunta otra vez a YouTube. Solo 1 h porque las direcciones de audio de YouTube caducan (~6 h).
+    private const val CACHE_MS = 60 * 60 * 1000L
+    private val cache = object : LinkedHashMap<String, Pair<Long, StreamInfo>>(32, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<Long, StreamInfo>>) = size > 20
+    }
+
+    /** Olvida una canción de la memoria (su dirección ha fallado: hay que pedir una nueva). */
+    fun forget(id: String) { synchronized(cache) { cache.remove(id) } }
+
     /**
      * Lanza IOException si es un problema de red (merece la pena reintentar)
      * o ContentError si el vídeo en sí no se puede reproducir.
      */
     fun resolve(track: Track): Resolved {
         ensureInit()
-        val info = try {
+        val now = SystemClock.elapsedRealtime()
+        val cached = synchronized(cache) { cache[track.id] }?.takeIf { now - it.first < CACHE_MS }?.second
+        if (cached != null) KrzLog.d("[CARGA] Audio desde la memoria (sin preguntar a YouTube)")
+        val info = cached ?: try {
             StreamInfo.getInfo(ServiceList.YouTube, "https://www.youtube.com/watch?v=${track.id}")
         } catch (e: IOException) {
             throw e
         } catch (e: Exception) {
             throw ContentError("${e.javaClass.simpleName}: ${e.message}", e)
         }
+        if (cached == null) synchronized(cache) { cache[track.id] = now to info }
 
         val audio = info.audioStreams.filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
         // Algunos vídeos traen varias pistas (doblajes): preferimos la original

@@ -62,7 +62,6 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
-    implementation("androidx.webkit:webkit:1.11.0")
 
     // Etapa 2: audio nativo
     // NewPipe Extractor: obtiene desde el móvil la dirección del audio de cada vídeo (sin anuncios)

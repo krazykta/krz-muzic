@@ -67,6 +67,10 @@ object KrzEngine {
     private var lastState = Player.STATE_IDLE
     private var stallStart = 0L           // cuándo empezó el corte actual (0 = no hay corte)
     private var networkWatched = false
+    // Lo que queremos conservar aunque Android apague el motor (ver release y resume)
+    private var parked: Pair<Track, Double>? = null   // canción y segundo al apagarse
+    private var volume = 1f
+    private var repeatMode = Player.REPEAT_MODE_OFF
 
     private const val MAX_ERROR_RETRIES = 3
 
@@ -109,6 +113,8 @@ object KrzEngine {
             .build()
         player.addListener(events)
         player.addAnalyticsListener(downloads)
+        player.volume = volume
+        player.repeatMode = repeatMode
         exo = player
         val wrapped = NotificationPlayer(player)
         sessionPlayer = wrapped
@@ -119,6 +125,11 @@ object KrzEngine {
 
     fun release() {
         main.removeCallbacks(ticker)
+        // Android para el servicio ~1 min después de pausar: apuntamos dónde íbamos para seguir luego
+        parked = current?.let { t ->
+            val p = exo
+            t to if (p == null || p.playbackState == Player.STATE_ENDED) 0.0 else p.currentPosition / 1000.0
+        }
         exo?.release()
         exo = null
         sessionPlayer = null
@@ -133,7 +144,9 @@ object KrzEngine {
     fun play(track: Track, startSec: Double = 0.0, autoplay: Boolean = true, isRetry: Boolean = false) {
         val token = ++loadToken
         current = track
+        parked = null
         if (!isRetry) errorRetries = 0
+        else StreamResolver.forget(track.id)   // la dirección guardada ha fallado (caducada o 403): pedir otra
         preparedNextId = null
         stallStart = 0
         KrzLog.d("[CARGA] ${if (isRetry) "Reintento" else "Pido"}: ${label(track)}" +
@@ -178,11 +191,24 @@ object KrzEngine {
     }
 
     fun pause() { exo?.pause() }
-    fun resume() { exo?.let { if (it.playbackState == Player.STATE_ENDED) it.seekTo(0); it.play() } }
+    /** Seguir sonando. Si Android apagó el motor en la pausa, vuelve a pedir la canción donde iba. */
+    fun resume() {
+        val p = exo ?: return
+        val saved = parked
+        if (p.mediaItemCount == 0 && saved != null) {
+            KrzLog.d("[SISTEMA] El motor se había apagado en la pausa: recupero la canción")
+            play(saved.first, saved.second)
+            return
+        }
+        if (p.playbackState == Player.STATE_ENDED) p.seekTo(0)
+        p.play()
+    }
     fun seek(sec: Double) { exo?.seekTo((sec * 1000).toLong()); tick() }
-    fun setVolume(v: Int) { exo?.volume = (v.coerceIn(0, 100)) / 100f }
-    fun setRepeatOne(on: Boolean) { exo?.repeatMode = if (on) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF }
-    fun stop() { ++loadToken; exo?.stop(); exo?.clearMediaItems(); current = null; preparedNextId = null }
+    fun setVolume(v: Int) { volume = (v.coerceIn(0, 100)) / 100f; exo?.volume = volume }
+    fun setRepeatOne(on: Boolean) {
+        repeatMode = if (on) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+        exo?.repeatMode = repeatMode
+    }
 
     /** Botón "siguiente" (de la notificación o de la web). */
     fun next() {

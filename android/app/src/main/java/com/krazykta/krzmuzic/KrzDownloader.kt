@@ -63,8 +63,11 @@ class KrzDownloader private constructor() : Downloader() {
             // La primera "cabecera" de HttpURLConnection tiene nombre null (es la línea de estado): fuera
             val headers = conn.headerFields.filterKeys { it != null }
             return Response(code, conn.responseMessage, headers, body, conn.url.toString())
-        } finally {
+        } catch (e: Exception) {
             conn.disconnect()
+            throw e
         }
+        // Sin disconnect() al ir bien: como ya hemos leído toda la respuesta, Android guarda la
+        // conexión abierta ("keep-alive") y la siguiente petición a YouTube se ahorra conectar de nuevo.
     }
 }
