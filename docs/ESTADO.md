@@ -22,15 +22,15 @@
   cortes a mitad de canción (`[CORTE]` + `[RED]` = conexión/batería; `[PAUSA] otra app` = foco de audio;
   `[ERROR] HTTP 403` = direcciones de YouTube caducadas). Falta que el usuario diga cómo es el corte.
 
-## Ventana flotante (PiP) — hecha, pendiente de probar en el móvil
-- Al salir de la app con música sonando (botón de inicio o cambiar de app) pasa a una ventana flotante 1:1.
-  Android: `supportsPictureInPicture` en el manifiesto y `onUserLeaveHint` en `MainActivity.kt`.
-  La web: Android pone `html.pip` y `css/styles.css` muestra solo la carátula con el título (probado a 240×240 en el navegador).
-- Los botones de la ventana los pone Android a partir de la sesión multimedia. **Sin comprobar en HyperOS**: si no salen,
-  añadirlos con `PictureInPictureParams.setActions`.
-- Notificación multimedia y "aviso de reproducción en marcha": ya los da Media3 (servicio en primer plano).
-  Falta que el usuario confirme cómo se ven (barra de notificaciones y pantalla de bloqueo). El aviso web de
-  Práctica no sirve aquí: el WebView no admite notificaciones web.
+## Notificación, pantalla de bloqueo y cápsula del notch (en curso)
+- Ventana flotante (PiP): **quitada** (21/10) a petición del usuario; quiere la cápsula del notch (Super Island de HyperOS 3).
+- Primera APK de la revisión: al usuario no le salen la notificación, los controles en la pantalla de bloqueo ni el aviso
+  de permisos. El aviso solo salía al abrir "de cero" y Android restaura la app tras actualizarla: ahora sale en cada arranque
+  y mira `areNotificationsEnabled` (permiso + interruptor de Ajustes).
+- `PlaybackService.onUpdateNotification` apunta `[SISTEMA] Notificación de música: primer plano …, notificaciones …`
+  (o `[ERROR] Android no dejó poner la notificación`). Pedir ese registro al usuario.
+- Cápsula: Xiaomi no tiene una API pública documentada; requiere primero que exista la notificación multimedia y,
+  en HyperOS 3, permitir la app en Ajustes → Super Island. Sin comprobar.
 
 ## Revisión general (en curso, sin subir: se sube todo junto al final)
 - **Fase A — fallos (hecha, pendiente de probar en el móvil):**

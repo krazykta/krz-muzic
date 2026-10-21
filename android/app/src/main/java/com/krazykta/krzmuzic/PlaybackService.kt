@@ -3,6 +3,7 @@ package com.krazykta.krzmuzic
 import android.app.PendingIntent
 import android.content.Intent
 import androidx.annotation.OptIn
+import androidx.core.app.NotificationManagerCompat
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -39,6 +40,23 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
+
+    /**
+     * Media3 llama aquí cada vez que pone o actualiza la notificación (play, pausa, canción nueva).
+     * Lo apuntamos en el registro solo cuando cambia algo: así sabremos si Android la llega a mostrar.
+     */
+    private var lastNotif = ""
+    override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
+        val allowed = NotificationManagerCompat.from(this).areNotificationsEnabled()
+        val now = "primer plano ${if (startInForegroundRequired) "sí" else "no"}, notificaciones ${if (allowed) "permitidas" else "BLOQUEADAS"}"
+        if (now != lastNotif) { lastNotif = now; KrzLog.d("[SISTEMA] Notificación de música: $now") }
+        try {
+            super.onUpdateNotification(session, startInForegroundRequired)
+        } catch (e: Exception) {
+            KrzLog.d("[ERROR] Android no dejó poner la notificación: ${e.javaClass.simpleName} ${e.message}")
+            throw e
+        }
+    }
 
     /** Si cierras la app deslizándola y no está sonando nada, apagamos el servicio. */
     override fun onTaskRemoved(rootIntent: Intent?) {

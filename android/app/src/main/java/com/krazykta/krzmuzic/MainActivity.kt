@@ -2,10 +2,8 @@ package com.krazykta.krzmuzic
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.app.PictureInPictureParams
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.content.res.Configuration
 import android.graphics.Color
 import android.net.Uri
 import android.os.Build
@@ -14,7 +12,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
-import android.util.Rational
 import android.webkit.JavascriptInterface
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -27,6 +24,7 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.NotificationManagerCompat
 
 /**
  * MainActivity — la única pantalla de la app.
@@ -119,8 +117,8 @@ class MainActivity : AppCompatActivity() {
                 )
             }
         }
-        // Solo al abrir de cero (no al girar la pantalla ni al volver de la ventana flotante)
-        if (savedInstanceState == null) checkPermissions()
+        // En cada arranque, también cuando Android "restaura" la app (p. ej. tras actualizarla)
+        checkPermissions()
 
         if (savedInstanceState != null) web.restoreState(savedInstanceState)
         else web.loadUrl(APP_URL)
@@ -137,29 +135,6 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() { super.onStart(); KrzLog.d("[SISTEMA] Pantalla de la app visible") }
     override fun onStop() { KrzLog.d("[SISTEMA] App en segundo plano o pantalla bloqueada"); super.onStop() }
 
-    /**
-     * Sales de la app (botón de inicio o cambias de app) con música sonando: ventana flotante (PiP).
-     * Android solo llama a esto cuando sales tú, no al bloquear la pantalla ni al abrir un enlace.
-     * shortcut: en Android 12+ setAutoEnterEnabled da una animación más suave; usarlo si esta se ve brusca.
-     */
-    override fun onUserLeaveHint() {
-        super.onUserLeaveHint()
-        if (Build.VERSION.SDK_INT < 26 || KrzEngine.sessionPlayer?.isPlaying != true) return
-        try {
-            enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(Rational(1, 1)).build())
-        } catch (e: Exception) {
-            // Pasa si has desactivado "Imagen en imagen" para la app en los ajustes
-            KrzLog.d("[SISTEMA] No se pudo abrir la ventana flotante: ${e.message}")
-        }
-    }
-
-    /** Entra o sale de la ventana flotante: la web enseña solo carátula y título (css: html.pip). */
-    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
-        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
-        KrzLog.d("[SISTEMA] Ventana flotante ${if (isInPictureInPictureMode) "abierta" else "cerrada"}")
-        web.evaluateJavascript("document.documentElement.classList.toggle('pip', $isInPictureInPictureMode)", null)
-    }
-
     override fun onDestroy() {
         KrzLog.d("[SISTEMA] App cerrada")
         KrzEngine.listener = null
@@ -168,12 +143,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---- Permisos ----
-    // Internet, servicio en segundo plano y ventana flotante los da Android al instalar.
+    // Internet y servicio en segundo plano los da Android al instalar.
     // Estos dos no: hay que pedirlos y el usuario dice sí o no en una ventana del sistema.
 
-    /** Notificaciones (Android 13+): sin ellas no sale la notificación con los controles de la música. */
-    private fun hasNotifications() = Build.VERSION.SDK_INT < 33 ||
-        checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    /**
+     * Notificaciones: sin ellas no sale la notificación con los controles de la música.
+     * areNotificationsEnabled mira las dos cosas: el permiso (Android 13+) y el interruptor de Ajustes.
+     */
+    private fun hasNotifications() = NotificationManagerCompat.from(this).areNotificationsEnabled()
+
+    /** Si Android aún puede preguntar, pregunta; si no (o estaban apagadas en Ajustes), abre sus ajustes. */
+    private fun askNotifications() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        else openSettings(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
+    }
 
     /** Batería "sin restricciones": sin esto, HyperOS y otros pueden cortar la música con la pantalla bloqueada. */
     private fun hasBattery() = getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
@@ -216,7 +201,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("Para que KRZ Muzic funcione bien")
             .setMessage(missing.joinToString("\n\n") + "\n\nAndroid te preguntará cada uno: pulsa Permitir.")
-            .setPositiveButton("Activar") { _, _ -> if (!notif) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS) else askBattery() }
+            .setPositiveButton("Activar") { _, _ -> if (!notif) askNotifications() else askBattery() }
             .setNegativeButton("Ahora no", null)
             .setNeutralButton("No volver a preguntar") { _, _ -> prefs.edit().putBoolean("noPermAsk", true).apply() }
             .show()
