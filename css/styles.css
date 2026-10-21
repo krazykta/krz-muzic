@@ -494,6 +494,8 @@ body.is-playing .is-current .eq i { animation: eq .85s ease-in-out infinite alte
 .seg { display: flex; gap: 2px; padding: 4px; border-radius: 999px; background: rgba(255, 255, 255, .08); }
 .seg button { height: 32px; padding: 0 16px; border-radius: 999px; font-size: 13.5px; font-weight: 800; color: var(--muted); }
 .seg button[aria-pressed="true"] { background: var(--text); color: #120f10; }
+/* En la app Android solo hay audio: escondemos el selector Canción/Vídeo */
+.is-native .np-head .seg { visibility: hidden; }
 
 .np-media {
   position: relative; flex: none; aspect-ratio: 1 / 1;

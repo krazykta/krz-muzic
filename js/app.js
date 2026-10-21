@@ -834,7 +834,8 @@ function updateModes() {
     b.setAttribute('aria-label', labels[repeat]);
     b.title = labels[repeat];
   });
-  document.body.classList.toggle('np-video', npMode === 'video');
+  // En la app Android no hay vídeo (el motor nativo solo descarga el audio)
+  document.body.classList.toggle('np-video', npMode === 'video' && !(player && player.native));
   $$('[data-action="np-mode"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mode === npMode)));
 }
 
@@ -1250,10 +1251,16 @@ const ERRORS = {
   100: 'Ese vídeo ya no existe o es privado. Paso a la siguiente.',
   101: 'Ese vídeo no permite reproducirse fuera de YouTube. Paso a la siguiente.',
   150: 'Ese vídeo no permite reproducirse fuera de YouTube. Paso a la siguiente.',
+  native: 'No se pudo cargar el audio de esa canción. Paso a la siguiente.',
   153: 'YouTube no sabe desde qué web lo llamas. Abre la app con iniciar.bat (http://localhost), no con doble clic en index.html.',
 };
 
 const handlers = {
+  /** Datos de una canción para la notificación de Android (título, artista y carátula). */
+  describe(id) {
+    const t = trackInfo(id);
+    return { title: t.title || '', artist: t.artist || '', thumb: thumb(id, 'hqdefault') };
+  },
   onTrack(id, { restored }) {
     playCounted = false;
     if (!store.get().tracks[id]) ensureStored([id]);
@@ -1515,6 +1522,8 @@ async function init() {
 
   try {
     player = await createPlayer('yt-player', handlers, store.get().settings);
+    document.body.classList.toggle('is-native', player.native);
+    updateModes();
     setupMediaSession();
     if (session) player.restore(session);
     renderQueue();
