@@ -1,10 +1,16 @@
 package com.krazykta.krzmuzic
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -15,18 +21,20 @@ import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 
 /**
- * MainActivity — la única pantalla de la app (etapa 1).
+ * MainActivity — la única pantalla de la app.
  *
  * Muestra KRZ Muzic dentro de un WebView: un navegador integrado en la app.
  * Carga la versión publicada en GitHub Pages, así que cada cambio que subamos
  * a GitHub aparece en la app sin reinstalar nada.
  *
- * En la etapa 2 añadiremos aquí un "puente" para que la web le pida a Android
- * que reproduzca el audio con su reproductor nativo (sin anuncios y en segundo plano).
+ * Etapa 2: un "puente" (KrzBridge) deja que la web le pida a Android que reproduzca
+ * el audio con su reproductor nativo (sin anuncios y en segundo plano), y le devuelve
+ * los eventos (está sonando, tiempo, canción terminada…).
  */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var web: WebView
+    private val main = Handler(Looper.getMainLooper())
 
     companion object {
         const val APP_URL = "https://krazykta.github.io/krz-muzic/"
@@ -44,11 +52,24 @@ class MainActivity : AppCompatActivity() {
             settings.mediaPlaybackRequiresUserGesture = false // que la música pueda empezar sola
             // Añadimos una marca al "user agent" (la tarjeta de presentación del navegador)
             // para que la web sepa que está dentro de la app nativa
-            settings.userAgentString = settings.userAgentString + " KRZMuzicApp/1"
+            settings.userAgentString = settings.userAgentString + " KRZMuzicApp/2"
+            // El puente: en la web aparecerá como window.KRZNative
+            addJavascriptInterface(KrzBridge(), "KRZNative")
             webChromeClient = WebChromeClient()
             webViewClient = KrzWebClient()
         }
         setContentView(web)
+
+        // Preparamos el motor y conectamos sus eventos con la web
+        KrzEngine.ensure(this)
+        KrzEngine.listener = { type, data ->
+            main.post {
+                web.evaluateJavascript(
+                    "window.__krzNative && window.__krzNative(${org.json.JSONObject.quote(type)}, $data)", null,
+                )
+            }
+        }
+        askNotificationPermission()
 
         if (savedInstanceState != null) web.restoreState(savedInstanceState)
         else web.loadUrl(APP_URL)
@@ -59,6 +80,75 @@ class MainActivity : AppCompatActivity() {
                 if (web.canGoBack()) web.goBack() else finish()
             }
         })
+    }
+
+    override fun onDestroy() {
+        KrzEngine.listener = null
+        web.destroy()
+        super.onDestroy()
+    }
+
+    /** Android 13+ pide permiso para mostrar notificaciones (la de la música). */
+    private fun askNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
+    }
+
+    /** Arranca el servicio de música (si ya está arrancado, no pasa nada). */
+    private fun startPlaybackService() {
+        KrzEngine.ensure(this)
+        startService(Intent(this, PlaybackService::class.java))
+    }
+
+    private fun parseTrack(o: org.json.JSONObject) = Track(
+        id = o.getString("id"),
+        title = o.optString("title").ifBlank { null },
+        artist = o.optString("artist").ifBlank { null },
+        thumb = o.optString("thumb").ifBlank { null },
+    )
+
+    /**
+     * El puente entre la web y Android.
+     * Cada función marcada con @JavascriptInterface se puede llamar desde JavaScript,
+     * por ejemplo: KRZNative.pause()
+     * Ojo: JavaScript las llama desde un hilo propio, así que pasamos cada orden al hilo
+     * principal con main.post { … } antes de tocar el reproductor.
+     */
+    inner class KrzBridge {
+        @JavascriptInterface fun version(): Int = 2
+
+        /** Estado actual (para cuando reabres la app con música sonando). */
+        @JavascriptInterface fun state(): String = KrzEngine.snapshot
+
+        /** json: {id, title, artist, thumb, start, autoplay} */
+        @JavascriptInterface fun play(json: String) {
+            val o = org.json.JSONObject(json)
+            val track = parseTrack(o)
+            val start = o.optDouble("start", 0.0)
+            val autoplay = o.optBoolean("autoplay", true)
+            main.post {
+                startPlaybackService()
+                KrzEngine.play(track, start, autoplay)
+            }
+        }
+
+        /** json: [{id, title, artist, thumb}, …] — las próximas canciones en orden */
+        @JavascriptInterface fun setUpcoming(json: String) {
+            val arr = org.json.JSONArray(json)
+            val list = (0 until arr.length()).map { parseTrack(arr.getJSONObject(it)) }
+            main.post { KrzEngine.setUpcoming(list) }
+        }
+
+        @JavascriptInterface fun pause() { main.post { KrzEngine.pause() } }
+        @JavascriptInterface fun resume() { main.post { startPlaybackService(); KrzEngine.resume() } }
+        @JavascriptInterface fun seek(sec: Double) { main.post { KrzEngine.seek(sec) } }
+        @JavascriptInterface fun next() { main.post { KrzEngine.next() } }
+        @JavascriptInterface fun setVolume(v: Int) { main.post { KrzEngine.setVolume(v) } }
+        @JavascriptInterface fun setRepeatOne(on: Boolean) { main.post { KrzEngine.setRepeatOne(on) } }
+        @JavascriptInterface fun stop() { main.post { KrzEngine.stop() } }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
