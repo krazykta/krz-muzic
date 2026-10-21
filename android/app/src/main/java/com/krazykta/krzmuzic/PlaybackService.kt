@@ -1,6 +1,7 @@
 package com.krazykta.krzmuzic
 
 import android.app.Notification
+import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
@@ -11,6 +12,7 @@ import android.provider.Settings
 import androidx.annotation.OptIn
 import androidx.core.app.NotificationManagerCompat
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 
@@ -27,10 +29,30 @@ import androidx.media3.session.MediaSessionService
 @OptIn(UnstableApi::class)
 class PlaybackService : MediaSessionService() {
 
+    private companion object { const val CHANNEL = "krz_musica" }
+
     private var session: MediaSession? = null
 
     override fun onCreate() {
         super.onCreate()
+        // Canal propio "Música": Media3 crea el suyo con importancia baja (silenciosa) y HyperOS
+        // esconde esas en la pantalla de bloqueo. Este es normal pero sin sonido ni vibración.
+        // Un canal ya creado no puede cambiar de importancia desde la app: por eso es un id nuevo.
+        if (Build.VERSION.SDK_INT >= 26) {
+            val ch = NotificationChannel(CHANNEL, getString(R.string.channel_music), NotificationManager.IMPORTANCE_DEFAULT).apply {
+                setSound(null, null)
+                enableVibration(false)
+                setShowBadge(false)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            }
+            getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
+        }
+        setMediaNotificationProvider(
+            DefaultMediaNotificationProvider.Builder(this)
+                .setChannelId(CHANNEL)
+                .setChannelName(R.string.channel_music)
+                .build()
+        )
         val player = KrzEngine.ensure(this)
         KrzLog.d("[SISTEMA] Servicio de música iniciado")
         // Al tocar la notificación, abrimos la app
@@ -94,8 +116,10 @@ class PlaybackService : MediaSessionService() {
             // Ajustes del sistema para la pantalla de bloqueo (algunos móviles no dejan leerlos)
             val show = runCatching { Settings.Secure.getInt(contentResolver, "lock_screen_show_notifications") }.getOrNull()
             val priv = runCatching { Settings.Secure.getInt(contentResolver, "lock_screen_allow_private_notifications") }.getOrNull()
+            val silent = runCatching { Settings.Secure.getInt(contentResolver, "lock_screen_show_silent_notifications") }.getOrNull()
             KrzLog.d("[SISTEMA] Pantalla de bloqueo: notificaciones ${show?.let { if (it == 1) "sí" else "NO" } ?: "?"}, " +
-                "contenido ${priv?.let { if (it == 1) "visible" else "OCULTO" } ?: "?"}, sonando ${if (session?.player?.isPlaying == true) "sí" else "no"}")
+                "contenido ${priv?.let { if (it == 1) "visible" else "OCULTO" } ?: "?"}, " +
+                "silenciosas ${silent?.let { if (it == 1) "sí" else "NO" } ?: "?"}, sonando ${if (session?.player?.isPlaying == true) "sí" else "no"}")
         } catch (e: Exception) {
             KrzLog.d("[SISTEMA] No se pudo leer el estado de la notificación: ${e.javaClass.simpleName} ${e.message}")
         }

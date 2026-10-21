@@ -33,6 +33,10 @@
   y nunca cambiaba. `NotificationPlayer` (KrzEngine) envolvía los avisos con `Player.Listener by listener`, y Kotlin no
   reenvía los métodos "default" de Java: la sesión no se enteraba de que sonaba. Arreglado con un `Proxy` que reenvía todo.
   Pendiente de probar en el móvil: debe salir `primer plano sí` al sonar.
+- Con el Proxy ya sale `primer plano sí` y Android tiene la notificación (id 1001, de música, pública), pero en un
+  canal «Está sonando» de importancia 2 (baja = silenciosa) y HyperOS no la enseña en la pantalla de bloqueo.
+  Ahora usa un canal propio «Música» (`krz_musica`, importancia normal, sin sonido ni vibración) y el registro
+  apunta también si el sistema muestra las silenciosas en bloqueo. Pendiente de probar en el móvil.
 - Cápsula: Xiaomi no tiene una API pública documentada; requiere primero que exista la notificación multimedia y,
   en HyperOS 3, permitir la app en Ajustes → Super Island. Sin comprobar.
 

@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">KRZ Muzic</string>
+    <string name="channel_music">Música</string>
     <string name="offline">Sin conexión. Comprueba tu internet y vuelve a abrir KRZ Muzic.</string>
 </resources>
