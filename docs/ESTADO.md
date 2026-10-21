@@ -38,7 +38,11 @@
   Ahora usa un canal propio «Música» (`krz_musica`, importancia normal, sin sonido ni vibración) y el registro
   apunta también si el sistema muestra las silenciosas en bloqueo. Pendiente de probar en el móvil.
 - Cápsula: Xiaomi no tiene una API pública documentada; requiere primero que exista la notificación multimedia y,
-  en HyperOS 3, permitir la app en Ajustes → Super Island. Sin comprobar.
+  en HyperOS 3, permitir la app en Ajustes → Super Island. **Funciona (capturas del 21/10)** con el canal «Música»
+  (importancia 3). Falta que el usuario confirme los controles en la pantalla de bloqueo.
+- Canciones que YouTube no deja oír (edad, borradas, privadas → `ContentError`): antes el motor no preparaba ninguna
+  detrás y, con la pantalla bloqueada, la música se paraba al acabar la actual. Ahora `KrzEngine` las apunta en
+  `unplayable` y prepara la siguiente que sí se puede (`[CARGA] Me salto …`). Pendiente de probar en el móvil.
 
 ## Revisión general (en curso, sin subir: se sube todo junto al final)
 - **Fase A — fallos (hecha, pendiente de probar en el móvil):**

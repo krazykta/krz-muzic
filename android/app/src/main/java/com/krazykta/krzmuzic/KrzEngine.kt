@@ -25,6 +25,7 @@ import org.json.JSONObject
 import java.io.IOException
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Proxy
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
 /**
@@ -63,6 +64,8 @@ object KrzEngine {
     private var current: Track? = null
     private var upcoming: List<Track> = emptyList()
     private var preparedNextId: String? = null
+    /** Canciones que YouTube no deja oír (edad, borradas, privadas): se saltan sin volver a pedirlas. */
+    private val unplayable = ConcurrentHashMap.newKeySet<String>()
     @Volatile private var loadToken = 0   // cada play() nuevo invalida las búsquedas anteriores
     @Volatile private var nextToken = 0
     private var errorRetries = 0          // reintentos tras error en la canción actual
@@ -168,6 +171,7 @@ object KrzEngine {
                     prepareNext()
                 }
             } catch (e: Exception) {
+                if (e is ContentError) unplayable += track.id
                 if (token != loadToken) return@execute
                 KrzLog.d("[ERROR] No se pudo cargar ${label(track)}: ${describe(e)}")
                 main.post {
@@ -183,7 +187,7 @@ object KrzEngine {
     fun setUpcoming(list: List<Track>) {
         upcoming = list
         val p = exo ?: return
-        if (preparedNextId != list.firstOrNull()?.id) {
+        if (preparedNextId != firstPlayable()?.id) {
             // La siguiente preparada ya no es la correcta: la quitamos y preparamos la buena
             val idx = p.currentMediaItemIndex
             if (p.mediaItemCount > idx + 1) p.removeMediaItems(idx + 1, p.mediaItemCount)
@@ -216,11 +220,11 @@ object KrzEngine {
     fun next() {
         val p = exo ?: return
         KrzLog.d("[BOTÓN] Siguiente")
+        val t = firstPlayable()
         when {
             p.hasNextMediaItem() -> p.seekToNextMediaItem()           // ya estaba preparada: al instante
-            upcoming.isNotEmpty() -> {                                 // aún no: la buscamos
-                val t = upcoming.first()
-                upcoming = upcoming.drop(1)
+            t != null -> {                                             // aún no: la buscamos
+                upcoming = upcoming.drop(upcoming.indexOf(t) + 1)
                 play(t)
                 emit("advanced", JSONObject().put("id", t.id))
             }
@@ -259,16 +263,24 @@ object KrzEngine {
         }
     }
 
-    /** Busca y deja preparada la siguiente canción detrás de la actual. */
+    private fun firstPlayable() = upcoming.firstOrNull { it.id !in unplayable }
+
+    /** Busca y deja preparada la siguiente canción detrás de la actual (saltando las que no se pueden oír). */
     private fun prepareNext() {
         val p = exo ?: return
-        val next = upcoming.firstOrNull() ?: return
+        val next = firstPlayable() ?: return
         if (preparedNextId == next.id || p.mediaItemCount > p.currentMediaItemIndex + 1) return
         val token = ++nextToken
         val forLoad = loadToken
         ioNext.execute {
             val r = try {
                 resolveWithRetry(next) { token == nextToken && forLoad == loadToken }
+            } catch (e: ContentError) {
+                // No es la red, es el vídeo: insistir no sirve. La apuntamos y preparamos la de después.
+                unplayable += next.id
+                KrzLog.d("[CARGA] Me salto ${label(next)}: YouTube no deja oírla (${describe(e)})")
+                main.post { if (token == nextToken && forLoad == loadToken) prepareNext() }
+                return@execute
             } catch (e: Exception) {
                 KrzLog.d("[CARGA] No se pudo preparar la siguiente (${label(next)}): ${describe(e)}")
                 null
@@ -276,7 +288,7 @@ object KrzEngine {
             main.post {
                 val pl = exo ?: return@post
                 if (r == null || token != nextToken || forLoad != loadToken) return@post
-                if (upcoming.firstOrNull()?.id != next.id) return@post
+                if (firstPlayable()?.id != next.id) return@post
                 if (pl.mediaItemCount > pl.currentMediaItemIndex + 1) return@post
                 pl.addMediaSource(r.source)
                 preparedNextId = next.id
@@ -293,7 +305,9 @@ object KrzEngine {
             val p = exo ?: return
             val id = item.mediaId
             current = upcoming.firstOrNull { it.id == id } ?: Track(id)
-            if (upcoming.firstOrNull()?.id == id) upcoming = upcoming.drop(1)
+            // Quitamos de "upcoming" esta y las que nos hemos saltado delante de ella
+            val at = upcoming.indexOfFirst { it.id == id }
+            if (at >= 0) upcoming = upcoming.drop(at + 1)
             preparedNextId = null
             errorRetries = 0
             KrzLog.d("[CARGA] Paso a la siguiente: ${label(current!!)}")
