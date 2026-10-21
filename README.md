@@ -1,7 +1,23 @@
 # KRZ muzic
 
 Reproductor de música personal que usa YouTube como fuente, con interfaz oscura al estilo YouTube Music.
-Es una **PWA** (Progressive Web App): una web que se puede instalar y abrir como si fuera una aplicación.
+Tiene dos formas:
+
+- **Web / PWA** (Progressive Web App: una web que se puede instalar y abrir como si fuera una aplicación),
+  publicada en https://krazykta.github.io/krz-muzic/.
+- **App Android**: la misma web dentro de una app, pero la música la pone un reproductor nativo
+  (NewPipe + ExoPlayer): sin anuncios, con la pantalla bloqueada, notificación con controles y ventana flotante.
+
+## App Android
+
+- **Descargar:** https://github.com/krazykta/krz-muzic/releases/tag/apk (archivo `krz-muzic.apk`).
+  Android avisará de que no viene de Play Store: "Más detalles → Instalar de todos modos".
+- **Compilar:** no se compila en el PC. Al subir a `main` cambios dentro de `android/`, GitHub Actions
+  (`.github/workflows/android.yml`) compila el APK y lo publica en ese enlace (tarda unos minutos).
+- La interfaz se carga desde la web publicada: los cambios de la web llegan a la app sin reinstalar.
+  Solo hay que reinstalar el APK cuando cambia algo de `android/`.
+- **Diagnóstico:** Biblioteca → "Diagnóstico de reproducción" muestra el registro de lo que hace el
+  reproductor (cortes, errores, red) y permite enviarlo.
 
 ## Cómo arrancarla
 
@@ -38,7 +54,7 @@ Con la app abierta en Chrome o Edge: botón **Instalar app** de la barra lateral
 ## Estructura
 
 ```
-KRZ_muzic/
+krz-muzic/
 ├── index.html            Estructura de la página (el esqueleto)
 ├── css/styles.css        Estilos: colores, tipografía, distribución
 ├── js/
@@ -46,18 +62,31 @@ KRZ_muzic/
 │   ├── player.js         Motor: cola, siguiente, aleatorio, repetir
 │   ├── catalog.js        Buscador: Piped e Invidious (servicios abiertos que leen YouTube)
 │   ├── youtube.js        Reproductor oficial de YouTube y títulos
+│   ├── recommend.js      Recomendaciones según lo que escuchas
 │   ├── ui.js             Avisos, menús y diálogos reutilizables
 │   ├── store.js          Datos: guarda todo en el navegador (localStorage)
 │   └── icons.js          Iconos SVG
 ├── sw.js                 Service worker: hace la app instalable y rápida
 ├── manifest.webmanifest  Nombre, icono y colores de la app instalada
 ├── icons/                Iconos de la app
-└── iniciar.bat           Arranca un servidor local en Windows
+├── iniciar.bat           Arranca un servidor local en Windows
+├── android/              App Android (Kotlin)
+│   └── app/src/main/java/com/krazykta/krzmuzic/
+│       ├── MainActivity.kt     Pantalla con la web + puente web ↔ Android (KRZNative)
+│       ├── KrzEngine.kt        Motor de audio: cola, siguiente, recuperar tras pausa
+│       ├── StreamResolver.kt   Pide a NewPipe la dirección del audio de cada vídeo
+│       ├── PlaybackService.kt  Servicio en primer plano: notificación y pantalla de bloqueo
+│       ├── KrzDownloader.kt    Conexión a internet que usa NewPipe
+│       ├── YoutubeHttpDataSource.java  Descarga los trozos de audio de YouTube
+│       └── KrzLog.kt           Registro de diagnóstico
+├── docs/ESTADO.md        En qué punto está el proyecto y qué falta
+└── .github/workflows/    Compilación automática del APK
 ```
 
 ## Límites conocidos
 
 - Los datos viven en **este navegador**. Otro navegador u otro dispositivo empieza vacío: usa la copia de seguridad.
-- En el móvil, la música se para al bloquear la pantalla o cambiar de app (lo impone YouTube en reproductores incrustados).
+- En la **web** del móvil, la música se para al bloquear la pantalla o cambiar de app (lo impone YouTube en reproductores incrustados). La app Android no tiene este límite.
+- La app Android depende de NewPipe: cuando YouTube cambia algo, puede dejar de sonar hasta actualizar su versión en `android/app/build.gradle.kts`.
 - Algunos vídeos no permiten reproducirse fuera de YouTube; la app los salta y avisa.
 - El buscador usa servidores de voluntarios (Piped e Invidious). Si uno cae, la app prueba otro; si caen todos, la búsqueda falla un rato.
