@@ -3,7 +3,7 @@
 // Estrategia "primero la red": si hay conexión siempre coge la versión nueva
 // (así tus cambios se ven al recargar) y, si no la hay, usa la copia guardada.
 
-const CACHE = 'krz-muzic-v7';
+const CACHE = 'krz-muzic-v8';
 const SHELL = [
   './',
   'index.html',
@@ -45,8 +45,10 @@ self.addEventListener('fetch', (event) => {
   const isFont = url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com';
   if (!isOwn && !isFont) return; // YouTube y miniaturas: que vayan directos
 
+  // cache: 'no-cache' → el navegador pregunta al servidor si hay versión nueva
+  // (sin esto, GitHub Pages deja usar copias de hasta 10 minutos)
   event.respondWith(
-    fetch(req)
+    fetch(isOwn ? req.url : req, isOwn ? { cache: 'no-cache' } : undefined)
       .then((res) => {
         if (res.ok) {
           const copy = res.clone();
