@@ -29,6 +29,7 @@ let lastAmbient = null;
 let ambFlip = false;
 let installEvt = null;
 let viewToken = 0;                   // evita pintar resultados viejos si cambias de pantalla
+let lastViewKey = '';                // última pantalla pintada (para conservar el scroll de los carruseles)
 const resolving = new Set();
 const durationSaved = new Set();
 const metaCache = new Map();         // canciones vistas en búsquedas (sin guardar)
@@ -259,9 +260,18 @@ function renderView() {
   const hadFocus = document.activeElement && document.activeElement.id === 'filter';
   const caret = hadFocus ? document.activeElement.selectionStart : 0;
   const token = ++viewToken;
+  // Al redibujar la misma pantalla (cambio de canción, Me gusta…) los carruseles no vuelven al principio
+  const key = `${route.name}/${route.arg || ''}`;
+  const changed = key !== lastViewKey;
+  const scrolls = changed ? [] : $$('#view .slider, #view .shelf').map((el) => el.scrollLeft);
+  lastViewKey = key;
 
   const views = { diag: viewDiag, foryou: viewForYou, songs: viewSongs, likes: viewLikes, playlists: viewPlaylists, playlist: viewPlaylist, search: viewSearch, remote: viewRemote };
-  $('#view').innerHTML = (views[route.name] || viewHome)(token);
+  const view = $('#view');
+  view.innerHTML = (views[route.name] || viewHome)(token);
+  // Pantalla nueva: entra con un fundido suave (al redibujar la misma, no, que parpadearía)
+  if (changed) { view.classList.remove('enter'); void view.offsetWidth; view.classList.add('enter'); }
+  $$('#view .slider, #view .shelf').forEach((el, i) => { if (scrolls[i]) el.scrollTo({ left: scrolls[i], behavior: 'instant' }); });
 
   if (hadFocus) {
     const f = $('#filter');
@@ -611,7 +621,7 @@ function sliderInner() {
       : 'Éxitos del momento. Cuanto más escuches, más se parecerá a tus gustos.'}</p>`;
   if (!tracks.length) {
     return head + (popularLoading || !popularData
-      ? '<div class="loading"><span class="spinner"></span>Cargando lo que suena ahora…</div>'
+      ? `<div class="slider" role="status" aria-label="Cargando lo que suena ahora…">${'<div class="slide sk"></div>'.repeat(3)}</div>`
       : '<p class="muted-note">No se han podido cargar los éxitos ahora mismo.</p>');
   }
   return `${head}
@@ -629,14 +639,14 @@ function sliderInner() {
           <button class="play-btn large slide-play" data-action="play-slide" data-index="${i}" aria-label="Reproducir ${esc(t.title)}">${icon('play')}</button>
           <button class="stretched slide-hit" data-action="play-slide" data-index="${i}" aria-label="Reproducir ${esc(t.title)}"></button>
         </div>`).join('')}
-    </div>`;
+    </div>
+    <div class="dots" id="slider-dots">${tracks.map((t, i) => `<button class="dot${i ? '' : ' on'}" data-action="slide-to" data-index="${i}" aria-label="Ver la ${i + 1}.ª: ${esc(t.title)}"></button>`).join('')}</div>`;
 }
 
 function moveSlider(dir) {
   const el = $('#slider');
   if (!el) return;
-  const slide = el.querySelector('.slide');
-  const step = slide ? slide.offsetWidth + 16 : el.clientWidth * 0.8;
+  const step = slideStep(el);
   const atEnd = el.scrollLeft + el.clientWidth >= el.scrollWidth - 8;
   if (dir > 0 && atEnd) el.scrollTo({ left: 0, behavior: 'smooth' });
   else el.scrollBy({ left: dir * step, behavior: 'smooth' });
@@ -651,7 +661,29 @@ setInterval(() => {
   moveSlider(1);
 }, 6000);
 
+/** Carrusel: cuánto se mueve para pasar de una portada a la siguiente (ancho + hueco). */
+function slideStep(el) {
+  const slide = el.querySelector('.slide');
+  return slide ? slide.offsetWidth + 16 : el.clientWidth * 0.8;
+}
+
+/** Puntos bajo el carrusel: se enciende el de la portada que estás viendo. */
+function updateDots() {
+  const el = $('#slider');
+  const dots = $$('#slider-dots .dot');
+  if (!el || !dots.length) return;
+  const atEnd = el.scrollLeft + el.clientWidth >= el.scrollWidth - 8;
+  const i = atEnd ? dots.length - 1 : Math.round(el.scrollLeft / slideStep(el));
+  dots.forEach((d, k) => d.classList.toggle('on', k === i));
+}
+
 // ---------- Buscar ----------
+/** "Esqueleto": la forma gris de los resultados mientras llegan (se nota más rápido que un círculo girando). */
+const skeleton = (label) => `
+  <div class="skeleton" role="status" aria-label="${label}">
+    ${'<div class="sk-row"><span class="sk-art"></span><span class="sk-lines"><i></i><i></i></span></div>'.repeat(6)}
+  </div>`;
+
 function viewSearch(token) {
   page = null;
   const q = route.arg.trim();
@@ -678,7 +710,7 @@ function viewSearch(token) {
   fillSearch(q, searchTab, token);
   return `
     <div class="chips tabs" role="tablist">${tabs.map(([k, label]) => `<button class="chip${k === searchTab ? ' on' : ''}" role="tab" aria-selected="${k === searchTab}" data-action="search-tab" data-tab="${k}">${label}</button>`).join('')}</div>
-    <div id="search-results"><div class="loading"><span class="spinner"></span>Buscando «${esc(q)}»…</div></div>`;
+    <div id="search-results">${skeleton(`Buscando «${esc(q)}»…`)}</div>`;
 }
 
 async function fillSearch(q, tab, token) {
@@ -826,6 +858,34 @@ function setNpArt(id) {
   hi.src = thumb(id, 'maxresdefault');
 }
 
+/**
+ * El color de la portada tiñe el panel "Ahora suena" y su sombra (variable CSS --tint).
+ * Leemos la miniatura pequeña en un lienzo de 8×8 y nos quedamos con el píxel más vivo
+ * (la media suele salir gris). YouTube deja leer sus miniaturas desde otras webs (CORS).
+ */
+function setTint(id) {
+  const im = new Image();
+  im.crossOrigin = 'anonymous';
+  im.onload = () => {
+    if (!player || player.current() !== id) return;
+    try {
+      const c = document.createElement('canvas');
+      c.width = c.height = 8;
+      const g = c.getContext('2d');
+      g.drawImage(im, 0, 0, 8, 8);
+      const d = g.getImageData(0, 0, 8, 8).data;
+      let best = null, score = -1;
+      for (let i = 0; i < d.length; i += 4) {
+        const [r, gr, b] = [d[i], d[i + 1], d[i + 2]];
+        const s = Math.max(r, gr, b) - Math.min(r, gr, b) + Math.max(r, gr, b) / 4;   // saturación + algo de brillo
+        if (s > score) { score = s; best = [r, gr, b]; }
+      }
+      document.body.style.setProperty('--tint', best.join(', '));
+    } catch { /* sin color: se queda el verde de la app */ }
+  };
+  im.src = thumb(id, 'default');
+}
+
 function refreshNowPlaying() {
   const id = player ? player.current() : null;
   document.body.classList.toggle('no-track', !id);
@@ -845,7 +905,7 @@ function refreshNowPlaying() {
     b.setAttribute('aria-label', liked ? 'Quitar de Me gusta' : 'Añadir a Me gusta');
     b.innerHTML = icon(liked ? 'heart-on' : 'heart');
   });
-  if (lastAmbient !== id) { setAmbient(id); setNpArt(id); lastAmbient = id; }
+  if (lastAmbient !== id) { setAmbient(id); setNpArt(id); setTint(id); lastAmbient = id; }
   document.title = `${title}${t.artist ? ` · ${t.artist}` : ''} | KRZ muzic`;
   setMediaMetadata(id, t);
 }
@@ -1246,10 +1306,13 @@ async function backup() {
     actions: [{ value: 'cancel', label: 'Cerrar' }, { value: 'import', label: 'Restaurar copia' }, { value: 'export', label: 'Descargar copia', primary: true }],
   });
   if (v === 'export') {
+    const name = `krz-muzic-copia-${new Date().toISOString().slice(0, 10)}.json`;
+    // En la app Android el WebView no descarga archivos: Android abre "Guardar como" (y avisa él)
+    if (window.KRZNative && window.KRZNative.saveBackup) return window.KRZNative.saveBackup(store.exportData(), name);
     const blob = new Blob([store.exportData()], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `krz-muzic-copia-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = name;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     toast('Copia descargada');
@@ -1376,6 +1439,68 @@ function setupMediaSession() {
 // ================================================================
 // 8. Escuchar eventos
 // ================================================================
+/** Latido del corazón al dar Me gusta. Espera un momento: algunas pantallas (Buscar) se rellenan justo después de redibujarse. */
+function beat(id) {
+  if (!store.get().likes.includes(id)) return;
+  const sel = [`[data-action="like"][data-id="${id}"]`];
+  if (player && player.current() === id) sel.push('[data-like-current]');
+  setTimeout(() => $$(sel.join(', ')).forEach((b) => {
+    b.classList.remove('beat');
+    void b.offsetWidth;   // reinicia la animación si ya estaba puesta
+    b.classList.add('beat');
+    b.addEventListener('animationend', () => b.classList.remove('beat'), { once: true });
+  }), 0);
+}
+
+/**
+ * Gestos del móvil:
+ *  - En la barra de abajo: deslizar a la izquierda = siguiente, a la derecha = anterior.
+ *  - En "Ahora suena": deslizar hacia abajo (estando arriba del todo) lo cierra.
+ */
+function bindGestures() {
+  const track = $('.bar-track');
+  let x0 = null, dx = 0, swiped = 0;
+  track.addEventListener('touchstart', (e) => { x0 = e.touches[0].clientX; dx = 0; }, { passive: true });
+  track.addEventListener('touchmove', (e) => {
+    if (x0 === null) return;
+    dx = e.touches[0].clientX - x0;
+    track.style.transform = `translateX(${dx * 0.4}px)`;
+    track.style.opacity = String(1 - Math.min(Math.abs(dx) / 300, 0.5));
+  }, { passive: true });
+  track.addEventListener('touchend', () => {
+    track.style.transform = '';
+    track.style.opacity = '';
+    if (x0 !== null && Math.abs(dx) > 60 && needPlayer()) {
+      swiped = Date.now();
+      if (dx < 0) player.next(); else player.prev();
+    }
+    x0 = null;
+  });
+  // Tras deslizar, el "clic" que manda el navegador al soltar no debe abrir el panel
+  track.addEventListener('click', (e) => { if (Date.now() - swiped < 500) e.stopPropagation(); }, true);
+
+  const np = $('#np');
+  let y0 = null, dy = 0;
+  np.addEventListener('touchstart', (e) => {
+    const can = isMobile() && !document.body.classList.contains('np-closed') && np.scrollTop <= 0 && !e.target.closest('input');
+    y0 = can ? e.touches[0].clientY : null;
+    dy = 0;
+  }, { passive: true });
+  np.addEventListener('touchmove', (e) => {
+    if (y0 === null) return;
+    dy = Math.max(0, e.touches[0].clientY - y0);
+    np.style.transition = 'none';
+    np.style.transform = dy ? `translateY(${dy}px)` : '';
+  }, { passive: true });
+  np.addEventListener('touchend', () => {
+    if (y0 === null) return;
+    y0 = null;
+    np.style.transition = '';
+    np.style.transform = '';
+    if (dy > 110) setNp(false);
+  });
+}
+
 function bindEvents() {
   // Delegación de eventos: un solo oyente para todos los botones con data-action
   document.addEventListener('click', (e) => {
@@ -1418,8 +1543,10 @@ function bindEvents() {
       case 'like':
         ensureStored([id]);
         store.toggleLike(id);
+        beat(id);
         break;
-      case 'like-current': if (player && player.current()) { ensureStored([player.current()]); store.toggleLike(player.current()); } break;
+      case 'like-current': if (player && player.current()) { const cur = player.current(); ensureStored([cur]); store.toggleLike(cur); beat(cur); } break;
+      case 'slide-to': { const s = $('#slider'); if (s) { sliderTouched = Date.now(); s.scrollTo({ left: index * slideStep(s), behavior: 'smooth' }); } break; }
       case 'track-menu': openTrackMenu(el, id, pos); break;
       case 'playlist-menu': openPlaylistMenu(el); break;
       case 'new-playlist': newPlaylist(); break;
@@ -1507,6 +1634,9 @@ function bindEvents() {
   $('#main').addEventListener('scroll', closeMenu, { passive: true });
   document.addEventListener('pointerdown', (e) => { if (e.target.closest('#slider')) sliderTouched = Date.now(); });
   document.addEventListener('wheel', (e) => { if (e.target.closest && e.target.closest('#slider')) sliderTouched = Date.now(); }, { passive: true });
+  // "scroll" no sube hasta document, pero sí se puede escuchar en la fase de captura (true)
+  document.addEventListener('scroll', (e) => { if (e.target.id === 'slider') updateDots(); }, true);
+  bindGestures();
 
   // --- Atajos de teclado (los mismos que en YouTube) ---
   document.addEventListener('keydown', (e) => {
