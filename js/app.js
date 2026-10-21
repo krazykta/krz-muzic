@@ -516,7 +516,8 @@ function viewForYou() {
 }
 
 // ---------- Aviso de instalación ----------
-const isStandalone = () => matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true
+  || navigator.userAgent.includes('KRZMuzicApp'); // dentro de la app Android
 function installBanner() {
   if (isStandalone() || !installEvt) return '';
   return `

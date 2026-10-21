@@ -1,0 +1,7 @@
+# Archivos que genera la compilación de Android: no se suben a GitHub
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.iml
+.idea/

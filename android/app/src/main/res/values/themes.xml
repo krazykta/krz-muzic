@@ -1,0 +1,9 @@
+<resources>
+    <!-- Tema oscuro a pantalla completa, con el mismo negro de la app -->
+    <style name="Theme.KRZMuzic" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@color/krz_bg</item>
+        <item name="android:statusBarColor">@color/krz_bg</item>
+        <item name="android:navigationBarColor">@color/krz_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
