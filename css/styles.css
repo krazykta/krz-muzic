@@ -63,17 +63,9 @@ svg { width: 24px; height: 24px; fill: currentColor; flex: none; }
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
 /* Texto con degradado: los títulos grandes llevan la luz */
-/* Tipografía destacada en verde flúor (sin degradado):
-   - relleno: un punto de luz radial en el centro que se apaga hacia el borde
-   - borde: un trazo oscuro muy fino que, al quedar medio dentro de la letra,
-     hace de sombra que entra desde el contorno hacia el interior
-   - fuera: sombra suave para despegarla del fondo */
+/* Tipografía destacada: verde flúor plano, sin luces ni sombras */
 .title-xl, .hero-title, .np-title, .top-title, .dlg-title, .welcome h2 {
-  background: radial-gradient(ellipse 60% 75% at 50% 42%, #eaffdc 0%, #9dff6b 22%, #39ff14 50%, #39ff14 100%);
-  -webkit-background-clip: text; background-clip: text;
-  color: transparent;
-  -webkit-text-stroke: 1.2px rgba(4, 40, 0, .55);
-  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, .6)) drop-shadow(0 0 18px rgba(57, 255, 20, .22));
+  color: var(--neon);
 }
 
 /* Luz ambiental */
@@ -110,7 +102,7 @@ body.np-closed .app { grid-template-columns: var(--side-w) minmax(0, 1fr); }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 22px; }
 .brand-mark { width: 48px; height: 48px; filter: drop-shadow(0 4px 14px rgba(57, 255, 20, .4)); }
 .brand-name { font-size: 24px; font-weight: 900; letter-spacing: -.02em; line-height: 1; white-space: nowrap; color: #fff; }
-.brand-name .krz { color: var(--neon); -webkit-text-stroke: .8px rgba(4, 40, 0, .5); text-shadow: 0 1px 2px rgba(0, 0, 0, .6), 0 0 14px rgba(57, 255, 20, .35); }
+.brand-name .krz { color: var(--neon); }
 
 /* Minilogo (arriba de cada página en móvil) */
 .mini-logo { display: none; flex: none; }
@@ -369,7 +361,7 @@ body.np-closed .app { grid-template-columns: var(--side-w) minmax(0, 1fr); }
 .row-artist { color: var(--muted); font-size: 13.5px; font-weight: 600; }
 .row-time { min-width: 46px; padding: 0 8px; color: var(--faint); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
 .is-pending .row-title { color: var(--faint); font-style: italic; }
-.is-current .row-title, .is-current .card-title, .is-current .top-title { color: var(--neon); -webkit-text-fill-color: var(--neon); text-shadow: 0 0 10px rgba(57, 255, 20, .35); }
+.is-current .row-title, .is-current .card-title, .is-current .top-title { color: var(--neon); }
 .compact .row { grid-template-columns: minmax(0, 1fr) auto; padding: 5px 4px; }
 .compact .thumb-wrap { width: 42px; height: 42px; }
 .compact .is-past { opacity: .45; }
