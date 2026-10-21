@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#08080a">
+  <!-- YouTube necesita saber desde qué web se le llama (error 153 si no lo sabe) -->
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta name="description" content="Reproductor personal de música basado en YouTube">
+  <title>KRZ muzic</title>
+
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/favicon-64.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400..1000&display=swap">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="no-track">
+
+  <!-- Pantalla de bienvenida: el logo principal mientras arranca la app -->
+  <div class="splash" id="splash" aria-hidden="true">
+    <img class="splash-logo" src="icons/logo-full.png" alt="">
+  </div>
+
+  <!-- Luz ambiental: la portada de la canción, muy desenfocada, tiñe el fondo -->
+  <div class="ambient" aria-hidden="true"><div class="amb"></div><div class="amb"></div></div>
+
+  <div class="app">
+
+    <!-- ===== Barra lateral (escritorio) ===== -->
+    <aside class="sidebar" aria-label="Navegación">
+      <a class="brand" href="#/home" aria-label="KRZ muzic, inicio">
+        <img class="brand-mark" src="icons/logo-mark.png" alt="">
+        <span class="brand-name"><span class="krz">KRZ</span> Muzic</span>
+      </a>
+
+      <nav class="nav">
+        <a class="nav-item" href="#/home" data-nav="home"><span data-icon="home"></span>Inicio</a>
+        <a class="nav-item" href="#/search" data-nav="search"><span data-icon="search"></span>Buscar</a>
+        <a class="nav-item" href="#/foryou" data-nav="foryou"><span data-icon="sparkle"></span>Para ti</a>
+        <a class="nav-item" href="#/songs" data-nav="songs"><span data-icon="music"></span>Canciones</a>
+        <a class="nav-item" href="#/likes" data-nav="likes"><span data-icon="heart-on"></span>Me gusta</a>
+      </nav>
+
+      <div class="side-section">
+        <div class="side-head">
+          <span>Tus playlists</span>
+          <button class="icon-btn small" data-action="new-playlist" aria-label="Nueva playlist" title="Nueva playlist"><span data-icon="add"></span></button>
+        </div>
+        <ul class="side-list" id="side-playlists"></ul>
+      </div>
+
+      <div class="side-foot">
+        <button class="nav-item" id="install-btn" data-action="install" hidden><span data-icon="install"></span>Instalar app</button>
+        <button class="nav-item" data-action="backup"><span data-icon="backup"></span>Copia de seguridad</button>
+      </div>
+    </aside>
+
+    <!-- ===== Zona central ===== -->
+    <main class="main" id="main">
+      <header class="topbar">
+        <a class="mini-logo" href="#/home" aria-label="KRZ muzic, inicio"><img src="icons/logo-mark.png" alt=""></a>
+        <form class="search" id="search-form" role="search" autocomplete="off">
+          <div class="search-field">
+            <span data-icon="search"></span>
+            <input id="search-input" type="search" enterkeyhint="search"
+                   placeholder="Buscar canciones o artistas"
+                   role="combobox" aria-label="Buscar canciones, álbumes y playlists"
+                   aria-autocomplete="list" aria-controls="search-pop" aria-expanded="false">
+            <button type="button" class="search-clear" data-action="clear-search" aria-label="Borrar búsqueda" hidden><span data-icon="close"></span></button>
+            <div class="scope" role="group" aria-label="Qué buscar">
+              <button type="button" data-action="scope" data-scope="songs">Canciones</button>
+              <button type="button" data-action="scope" data-scope="playlists">Playlists</button>
+            </div>
+          </div>
+          <div class="search-pop" id="search-pop" role="listbox" aria-label="Sugerencias" hidden></div>
+        </form>
+      </header>
+      <div id="view"></div>
+    </main>
+
+    <!-- ===== Panel "Ahora suena" ===== -->
+    <section class="np" id="np" aria-label="Ahora suena">
+      <div class="np-head">
+        <div class="seg" role="group" aria-label="Qué mostrar">
+          <button data-action="np-mode" data-mode="song">Canción</button>
+          <button data-action="np-mode" data-mode="video">Vídeo</button>
+        </div>
+        <button class="icon-btn" data-action="toggle-np" aria-label="Cerrar panel"><span data-icon="chevron-down"></span></button>
+      </div>
+
+      <div class="np-media">
+        <!-- Aquí la API de YouTube mete su reproductor (un iframe). Nunca se mueve de sitio:
+             si se moviera, YouTube lo recargaría y cortaría la música. -->
+        <div id="yt-player"></div>
+        <img class="np-art" id="np-art" alt="">
+        <div class="np-empty"><p>Busca una canción y aparecerá aquí.</p></div>
+        <button class="np-expand" data-action="toggle-np" aria-label="Ampliar"><span data-icon="expand"></span></button>
+      </div>
+
+      <div class="np-info">
+        <div class="np-titles">
+          <h2 class="np-title" id="np-title">Nada sonando</h2>
+          <p class="np-artist" id="np-artist"></p>
+        </div>
+        <div class="np-actions">
+          <button class="icon-btn" data-action="add-current" aria-label="Añadir a una playlist" title="Añadir a una playlist"><span data-icon="playlist-add"></span></button>
+          <button class="icon-btn like" data-action="like-current" data-like-current aria-label="Me gusta"><span data-icon="heart"></span></button>
+        </div>
+      </div>
+
+      <!-- Controles completos dentro del panel (solo móvil) -->
+      <div class="np-controls">
+        <div class="progress">
+          <input class="range seek js-seek" type="range" min="0" max="1000" step="1" value="0" aria-label="Posición de la canción">
+          <div class="progress-times"><span class="js-cur">0:00</span><span class="js-dur">0:00</span></div>
+        </div>
+        <div class="np-buttons">
+          <button class="icon-btn" data-action="shuffle" aria-label="Aleatorio"><span data-icon="shuffle"></span></button>
+          <button class="icon-btn big" data-action="prev" aria-label="Anterior"><span data-icon="prev"></span></button>
+          <button class="play-btn large js-play" data-action="toggle-play" aria-label="Reproducir"><span data-icon="play"></span></button>
+          <button class="icon-btn big" data-action="next" aria-label="Siguiente"><span data-icon="next"></span></button>
+          <button class="icon-btn" data-action="repeat" aria-label="Repetir"><span data-icon="repeat"></span></button>
+        </div>
+      </div>
+
+      <div class="np-queue">
+        <div class="np-queue-head">
+          <h3>A continuación</h3>
+          <p id="queue-context"></p>
+        </div>
+        <ol class="tracks compact" id="queue"></ol>
+      </div>
+    </section>
+  </div>
+
+  <!-- ===== Barra del reproductor ===== -->
+  <footer class="bar" id="bar">
+    <div class="bar-left">
+      <button class="bar-track" data-action="toggle-np" aria-label="Mostrar lo que suena">
+        <img class="bar-art" id="bar-art" alt="">
+        <span class="bar-text">
+          <span class="bar-title" id="bar-title">Nada sonando</span>
+          <span class="bar-artist" id="bar-artist"></span>
+        </span>
+      </button>
+      <button class="icon-btn like" data-action="like-current" data-like-current aria-label="Me gusta"><span data-icon="heart"></span></button>
+      <button class="icon-btn desk" data-action="add-current" aria-label="Añadir a una playlist" title="Añadir a una playlist"><span data-icon="playlist-add"></span></button>
+    </div>
+
+    <div class="bar-center">
+      <div class="bar-buttons">
+        <button class="icon-btn desk" data-action="shuffle" aria-label="Aleatorio"><span data-icon="shuffle"></span></button>
+        <button class="icon-btn desk" data-action="prev" aria-label="Anterior"><span data-icon="prev"></span></button>
+        <button class="play-btn js-play" data-action="toggle-play" aria-label="Reproducir"><span data-icon="play"></span></button>
+        <button class="icon-btn" data-action="next" aria-label="Siguiente"><span data-icon="next"></span></button>
+        <button class="icon-btn desk" data-action="repeat" aria-label="Repetir"><span data-icon="repeat"></span></button>
+      </div>
+      <div class="bar-progress">
+        <span class="time js-cur">0:00</span>
+        <input class="range seek js-seek" type="range" min="0" max="1000" step="1" value="0" aria-label="Posición de la canción">
+        <span class="time js-dur">0:00</span>
+      </div>
+    </div>
+
+    <div class="bar-right">
+      <button class="icon-btn" id="np-btn" data-action="toggle-np" aria-label="Mostrar vídeo y cola"><span data-icon="queue"></span></button>
+      <div class="volume">
+        <button class="icon-btn" id="mute-btn" data-action="mute" aria-label="Silenciar"><span data-icon="volume"></span></button>
+        <input id="volume" class="range" type="range" min="0" max="100" step="1" value="80" aria-label="Volumen">
+      </div>
+    </div>
+  </footer>
+
+  <!-- ===== Navegación inferior (móvil) ===== -->
+  <nav class="tabbar" aria-label="Navegación">
+    <a class="tab" href="#/home" data-nav="home"><span data-icon="home"></span>Inicio</a>
+    <a class="tab" href="#/search" data-nav="search"><span data-icon="search"></span>Buscar</a>
+    <a class="tab" href="#/foryou" data-nav="foryou"><span data-icon="sparkle"></span>Para ti</a>
+    <a class="tab" href="#/playlists" data-nav="playlists" data-nav-also="songs likes playlist"><span data-icon="list"></span>Biblioteca</a>
+  </nav>
+
+  <div class="menu" id="menu" role="menu" hidden></div>
+  <dialog id="dialog"></dialog>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <input type="file" id="import-file" accept="application/json,.json" hidden>
+  <!-- Reproductor auxiliar invisible: respaldo para leer playlists de YouTube -->
+  <div class="yt-helper" id="yt-helper" aria-hidden="true"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
