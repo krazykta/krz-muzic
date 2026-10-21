@@ -57,9 +57,6 @@ object StreamResolver {
         }
     }
 
-    /** Resultado: lo que reproduce ExoPlayer + una descripción para el registro. */
-    class Resolved(val source: MediaSource, val info: String)
-
     // Si falla la descarga de un trozo (p. ej. un bache de cobertura), ExoPlayer lo reintenta
     // hasta 8 veces antes de rendirse (por defecto son 3). Mientras, sigue sonando lo ya descargado.
     private val patientRetries = DefaultLoadErrorHandlingPolicy(8)
@@ -95,11 +92,10 @@ object StreamResolver {
      * Lanza IOException si es un problema de red (merece la pena reintentar)
      * o ContentError si el vídeo en sí no se puede reproducir.
      */
-    fun resolve(track: Track): Resolved {
+    fun resolve(track: Track): MediaSource {
         ensureInit()
         val now = SystemClock.elapsedRealtime()
         val cached = synchronized(cache) { cache[track.id] }?.takeIf { now - it.first < CACHE_MS }?.second
-        if (cached != null) KrzLog.d("[CARGA] Audio desde la memoria (sin preguntar a YouTube)")
         val info = cached ?: try {
             StreamInfo.getInfo(ServiceList.YouTube, "https://www.youtube.com/watch?v=${track.id}")
         } catch (e: IOException) {
@@ -114,7 +110,6 @@ object StreamResolver {
         val original = audio.filter { it.audioTrackType == null || it.audioTrackType == AudioTrackType.ORIGINAL }
         val best = original.ifEmpty { audio }.maxByOrNull { it.averageBitrate }
             ?: throw ContentError("Este vídeo no tiene pista de audio disponible")
-        val desc = "${best.format?.name ?: "?"} ${best.averageBitrate} kbps"
 
         // Datos para la notificación y la pantalla de bloqueo
         val meta = MediaMetadata.Builder()
@@ -135,10 +130,10 @@ object StreamResolver {
             val parsed = DashManifestParser().parse(
                 Uri.parse(""), ByteArrayInputStream(manifest.toByteArray(Charsets.UTF_8)),
             )
-            Resolved(dashFactory.createMediaSource(parsed, item), "$desc, por trozos (DASH)")
+            dashFactory.createMediaSource(parsed, item)
         } catch (e: Exception) {
             // Plan B: reproducirlo como un archivo normal
-            Resolved(progressiveFactory.createMediaSource(item), "$desc, archivo completo")
+            progressiveFactory.createMediaSource(item)
         }
     }
 }

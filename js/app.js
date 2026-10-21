@@ -87,7 +87,7 @@ function cachedSearch(kind, q) {
 // 2. Rutas: la parte de la URL después de # decide la pantalla
 //    #/home  #/search/texto  #/foryou  #/songs  #/likes  #/playlists  #/playlist/ID  #/remote/IDYOUTUBE
 // ================================================================
-const ROUTES = ['home', 'search', 'foryou', 'songs', 'likes', 'playlists', 'playlist', 'remote', 'diag'];
+const ROUTES = ['home', 'search', 'foryou', 'songs', 'likes', 'playlists', 'playlist', 'remote'];
 function parseHash() {
   const raw = location.hash.replace(/^#\/?/, '');
   const [name, ...rest] = raw.split('/');
@@ -266,7 +266,7 @@ function renderView() {
   const scrolls = changed ? [] : $$('#view .slider, #view .shelf').map((el) => el.scrollLeft);
   lastViewKey = key;
 
-  const views = { diag: viewDiag, foryou: viewForYou, songs: viewSongs, likes: viewLikes, playlists: viewPlaylists, playlist: viewPlaylist, search: viewSearch, remote: viewRemote };
+  const views = { foryou: viewForYou, songs: viewSongs, likes: viewLikes, playlists: viewPlaylists, playlist: viewPlaylist, search: viewSearch, remote: viewRemote };
   const view = $('#view');
   view.innerHTML = (views[route.name] || viewHome)(token);
   // Pantalla nueva: entra con un fundido suave (al redibujar la misma, no, que parpadearía)
@@ -372,53 +372,7 @@ function viewPlaylists() {
       <div class="tile"><span class="card-art cover-songs tile-art">${icon('music')}</span><a class="tile-name stretched" href="#/songs">Canciones guardadas</a></div>
     </div>
     <section class="block"><h2>Tus playlists</h2>${playlistGrid()}</section>
-    ${s.playlists.length ? '' : '<p class="muted-note">Las playlists que guardes desde el buscador también aparecerán aquí.</p>'}
-    ${window.KRZNative ? '<p class="diag-link"><a class="btn btn-ghost" href="#/diag">Diagnóstico de reproducción</a></p>' : ''}`;
-}
-
-// ---------- Diagnóstico (solo en la app Android) ----------
-// Lee el registro que escribe Android (KrzLog.kt) y cuenta lo que ha pasado por etiquetas.
-const DIAG_COUNTS = [
-  { label: 'Cortes por falta de datos', test: (l) => l.includes('[CORTE] Se ha quedado') },
-  { label: 'Trozos que fallaron al descargar', test: (l) => l.includes('[RED] Falló la descarga') },
-  { label: 'Pérdidas de conexión', test: (l) => l.includes('[RED] Conexión perdida') },
-  { label: 'Pausas por otra app', test: (l) => l.includes('[PAUSA]') && l.includes('otra app') },
-  { label: 'Errores graves', test: (l) => l.includes('[ERROR]') },
-];
-
-function readLog() {
-  try { return window.KRZNative.getLog() || ''; } catch { return ''; }
-}
-
-function viewDiag() {
-  page = null;
-  setList([], '');
-  if (!window.KRZNative || !window.KRZNative.getLog) {
-    return `<header class="view-head"><h1 class="title-xl">Diagnóstico</h1></header>
-      <p class="muted-note">El diagnóstico solo está disponible dentro de la app Android (versión nueva).</p>`;
-  }
-  const lines = readLog().trim().split('\n').filter(Boolean);
-  const stats = DIAG_COUNTS.map((c) => `<div class="diag-stat"><b>${lines.filter(c.test).length}</b><span>${c.label}</span></div>`).join('');
-  const tagOf = (l) => (l.match(/\[(CORTE|RED|PAUSA|ERROR|CARGA|WEB|BOTÓN|SISTEMA)\]/) || [])[1] || '';
-  const rows = lines.slice(-400).reverse()
-    .map((l) => `<div class="diag-line t-${tagOf(l).toLowerCase()}">${esc(l)}</div>`).join('');
-  return `
-    <header class="view-head"><h1 class="title-xl">Diagnóstico</h1></header>
-    <p class="muted-note">Escucha música como siempre. Cuando se corte, vuelve aquí y pulsa «Enviar registro»: verás qué pasó y a qué hora.</p>
-    <div class="diag-stats">${stats}</div>
-    <div class="diag-actions">
-      <button class="btn btn-primary" data-action="diag-share">Enviar registro</button>
-      <button class="btn btn-ghost" data-action="diag-refresh">Actualizar</button>
-      <button class="btn btn-ghost" data-action="diag-clear">Borrar</button>
-    </div>
-    <div class="diag-log">${rows || '<div class="diag-line">Todavía no hay nada apuntado.</div>'}</div>`;
-}
-
-function shareLog() {
-  const N = window.KRZNative;
-  const head = `KRZ Muzic — ${N.deviceInfo ? N.deviceInfo() : ''}\n${navigator.userAgent}\n\n`;
-  // Las 600 últimas líneas son suficientes (y caben en un mensaje)
-  N.share(head + readLog().trim().split('\n').slice(-600).join('\n'));
+    ${s.playlists.length ? '' : '<p class="muted-note">Las playlists que guardes desde el buscador también aparecerán aquí.</p>'}`;
 }
 
 function viewSongs() {
@@ -1533,12 +1487,6 @@ function bindEvents() {
       }
       case 'refresh-reco': toast('Actualizando recomendaciones…'); ensureReco({ force: true }); if (route.name === 'foryou') renderView(); break;
       case 'save-remote': saveRemote(el.dataset.list); break;
-      case 'diag-refresh': renderView(); break;
-      case 'diag-share': shareLog(); break;
-      case 'diag-clear':
-        confirmDialog({ title: 'Borrar el registro', body: 'Se borra todo lo apuntado hasta ahora. ¿Seguro?', confirm: 'Borrar', danger: true })
-          .then((ok) => { if (ok) { window.KRZNative.clearLog(); renderView(); } });
-        break;
       case 'import-remote': importPlaylist(el.dataset.list); break;
       case 'like':
         ensureStored([id]);

@@ -6,7 +6,7 @@ Tiene dos formas:
 - **Web / PWA** (Progressive Web App: una web que se puede instalar y abrir como si fuera una aplicación),
   publicada en https://krazykta.github.io/krz-muzic/.
 - **App Android**: la misma web dentro de una app, pero la música la pone un reproductor nativo
-  (NewPipe + ExoPlayer): sin anuncios, con la pantalla bloqueada, notificación con controles y ventana flotante.
+  (NewPipe + ExoPlayer): sin anuncios, con la pantalla bloqueada y con notificación de controles (y cápsula del notch en HyperOS).
 
 ## App Android
 
@@ -16,8 +16,6 @@ Tiene dos formas:
   (`.github/workflows/android.yml`) compila el APK y lo publica en ese enlace (tarda unos minutos).
 - La interfaz se carga desde la web publicada: los cambios de la web llegan a la app sin reinstalar.
   Solo hay que reinstalar el APK cuando cambia algo de `android/`.
-- **Diagnóstico:** Biblioteca → "Diagnóstico de reproducción" muestra el registro de lo que hace el
-  reproductor (cortes, errores, red) y permite enviarlo.
 
 ## Cómo arrancarla
 
@@ -77,8 +75,7 @@ krz-muzic/
 │       ├── StreamResolver.kt   Pide a NewPipe la dirección del audio de cada vídeo
 │       ├── PlaybackService.kt  Servicio en primer plano: notificación y pantalla de bloqueo
 │       ├── KrzDownloader.kt    Conexión a internet que usa NewPipe
-│       ├── YoutubeHttpDataSource.java  Descarga los trozos de audio de YouTube
-│       └── KrzLog.kt           Registro de diagnóstico
+│       └── YoutubeHttpDataSource.java  Descarga los trozos de audio de YouTube
 ├── docs/ESTADO.md        En qué punto está el proyecto y qué falta
 └── .github/workflows/    Compilación automática del APK
 ```
@@ -88,5 +85,5 @@ krz-muzic/
 - Los datos viven en **este navegador**. Otro navegador u otro dispositivo empieza vacío: usa la copia de seguridad.
 - En la **web** del móvil, la música se para al bloquear la pantalla o cambiar de app (lo impone YouTube en reproductores incrustados). La app Android no tiene este límite.
 - La app Android depende de NewPipe: cuando YouTube cambia algo, puede dejar de sonar hasta actualizar su versión en `android/app/build.gradle.kts`.
-- Algunos vídeos no permiten reproducirse fuera de YouTube; la app los salta y avisa.
+- Algunos vídeos no permiten reproducirse fuera de YouTube (p. ej. con restricción de edad); la app los salta.
 - El buscador usa servidores de voluntarios (Piped e Invidious). Si uno cae, la app prueba otro; si caen todos, la búsqueda falla un rato.

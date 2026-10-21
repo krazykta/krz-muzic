@@ -11,7 +11,7 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Para pedir "batería sin restricciones" con la ventana directa de Android -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-    <!-- Diagnóstico: saber cuándo cambia la conexión (wifi, datos, sin cobertura) -->
+    <!-- Saber si hay wifi o datos: ExoPlayer lo usa para calcular cuánto descargar -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application

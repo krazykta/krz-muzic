@@ -59,10 +59,8 @@ class MainActivity : AppCompatActivity() {
         if (uri == null || json == null) return@registerForActivityResult   // has cancelado
         try {
             contentResolver.openOutputStream(uri)?.use { it.write(json.toByteArray(Charsets.UTF_8)) }
-            KrzLog.d("[SISTEMA] Copia de seguridad guardada (${json.length / 1024} KB)")
             Toast.makeText(this, "Copia guardada", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
-            KrzLog.d("[ERROR] No se pudo guardar la copia de seguridad: ${e.message}")
             Toast.makeText(this, "No se pudo guardar la copia", Toast.LENGTH_LONG).show()
         }
     }
@@ -109,7 +107,6 @@ class MainActivity : AppCompatActivity() {
 
         // Preparamos el motor y conectamos sus eventos con la web
         KrzEngine.ensure(this)
-        KrzLog.d("[SISTEMA] App abierta")
         KrzEngine.listener = { type, data ->
             main.post {
                 web.evaluateJavascript(
@@ -131,12 +128,7 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    // La pantalla se ve / deja de verse (bloqueo, cambiar de app…): útil para cruzarlo con los cortes
-    override fun onStart() { super.onStart(); KrzLog.d("[SISTEMA] Pantalla de la app visible") }
-    override fun onStop() { KrzLog.d("[SISTEMA] App en segundo plano o pantalla bloqueada"); super.onStop() }
-
     override fun onDestroy() {
-        KrzLog.d("[SISTEMA] App cerrada")
         KrzEngine.listener = null
         web.destroy()
         super.onDestroy()
@@ -186,11 +178,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Al abrir: apunta en el registro cómo están los permisos y, si falta alguno, avisa (salvo "No volver a preguntar"). */
+    /** Al abrir: si falta algún permiso, avisa (salvo "No volver a preguntar"). */
     private fun checkPermissions() {
         val notif = hasNotifications()
         val battery = hasBattery()
-        KrzLog.d("[SISTEMA] Permisos: notificaciones ${if (notif) "sí" else "NO"}, batería sin restricciones ${if (battery) "sí" else "NO"}")
         val prefs = getSharedPreferences("krz", MODE_PRIVATE)
         if ((notif && battery) || prefs.getBoolean("noPermAsk", false)) return
 
@@ -250,9 +241,9 @@ class MainActivity : AppCompatActivity() {
             main.post { KrzEngine.setUpcoming(list) }
         }
 
-        @JavascriptInterface fun pause() { KrzLog.d("[WEB] Pausa"); main.post { KrzEngine.pause() } }
-        @JavascriptInterface fun resume() { KrzLog.d("[WEB] Reanudar"); main.post { startPlaybackService(); KrzEngine.resume() } }
-        @JavascriptInterface fun seek(sec: Double) { KrzLog.d("[WEB] Saltar al segundo ${sec.toInt()}"); main.post { KrzEngine.seek(sec) } }
+        @JavascriptInterface fun pause() { main.post { KrzEngine.pause() } }
+        @JavascriptInterface fun resume() { main.post { startPlaybackService(); KrzEngine.resume() } }
+        @JavascriptInterface fun seek(sec: Double) { main.post { KrzEngine.seek(sec) } }
         @JavascriptInterface fun next() { main.post { KrzEngine.next() } }
         @JavascriptInterface fun setVolume(v: Int) { main.post { KrzEngine.setVolume(v) } }
         @JavascriptInterface fun setRepeatOne(on: Boolean) { main.post { KrzEngine.setRepeatOne(on) } }
@@ -261,24 +252,6 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface fun saveBackup(json: String, name: String) {
             main.post { pendingBackup = json; saveBackup.launch(name) }
         }
-
-        // ---- Diagnóstico ----
-        /** Devuelve el registro completo (texto). */
-        @JavascriptInterface fun getLog(): String = KrzLog.read()
-        @JavascriptInterface fun clearLog() { KrzLog.clear() }
-        /** Abre el menú "Compartir" de Android con el registro (WhatsApp, correo, etc.). */
-        @JavascriptInterface fun share(text: String) {
-            main.post {
-                val send = Intent(Intent.ACTION_SEND)
-                    .setType("text/plain")
-                    .putExtra(Intent.EXTRA_SUBJECT, "Registro de KRZ Muzic")
-                    .putExtra(Intent.EXTRA_TEXT, text)
-                startActivity(Intent.createChooser(send, "Enviar registro"))
-            }
-        }
-        /** Datos del móvil para el informe. */
-        @JavascriptInterface fun deviceInfo(): String =
-            "${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
