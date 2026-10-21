@@ -37,8 +37,17 @@ let recoData = reco.getCached();     // recomendaciones (las últimas calculadas
 let recoLoading = false;
 let recoError = false;
 let playCounted = false;             // ¿ya contamos la escucha de la canción actual?
+let popularData = reco.getCachedPopular(); // éxitos del momento (se guardan 12 h)
+let popularLoading = false;
+let sliderList = [];                 // canciones del carrusel (para reproducirlas)
+let sliderTouched = 0;               // última vez que tocaste el carrusel (pausa el avance automático)
 
-const EXPLORE = ['Éxitos del momento', 'Pop en español', 'Rock clásico', 'Reguetón', 'Lo-fi para concentrarse', 'Flamenco', 'Indie', 'Jazz para la noche', 'Hip hop', 'Electrónica'];
+const EXPLORE = [
+  'Éxitos del momento', 'Rock', 'Metal', 'Dubstep', 'Heavy metal', 'Metalcore', 'Hard rock', 'Punk rock',
+  'Rock clásico', 'Rock en español', 'Indie', 'Pop en español', 'Reguetón', 'Trap', 'Hip hop', 'Rap español',
+  'Electrónica', 'Techno', 'House', 'Drum and bass', 'Hardstyle', 'Synthwave', 'Lo-fi para concentrarse',
+  'Flamenco', 'Salsa', 'Bachata', 'Reggae', 'Funk', 'Blues', 'Jazz para la noche', 'Clásica', 'Años 80', 'Años 90',
+];
 
 function greeting() {
   const h = new Date().getHours();
@@ -325,17 +334,11 @@ function viewHome() {
   s.playlists.slice(0, 7).forEach((p) => {
     tiles.push(`<div class="tile">${cover(p, 'tile-art')}<a class="tile-name stretched" href="#/playlist/${p.id}">${esc(p.name)}</a>${p.trackIds.length ? `<button class="tile-play" data-action="play-playlist" data-id="${p.id}" aria-label="Reproducir ${esc(p.name)}">${icon('play')}</button>` : ''}</div>`);
   });
-  const empty = !Object.keys(s.tracks).length && !s.playlists.length;
   return `
     <header class="view-head"><h1 class="title-xl">${greeting()}</h1></header>
+    ${sliderSection()}
     ${tiles.length ? `<div class="tiles">${tiles.join('')}</div>` : ''}
     ${recoHomeSection()}
-    ${empty ? `
-      <div class="welcome">
-        <h2>¿Qué te apetece escuchar?</h2>
-        <p>Escribe una canción o un artista arriba, elige una sugerencia y suena al momento. O empieza por aquí:</p>
-        <div class="chips">${EXPLORE.slice(0, 6).map((q) => `<button class="chip" data-action="go-search" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>
-      </div>` : ''}
     ${recent.length ? `
       <section class="block">
         <h2>Escuchado hace poco</h2>
@@ -446,7 +449,7 @@ function ensureReco({ force = false } = {}) {
     .finally(() => {
       recoLoading = false;
       if (route.name === 'foryou') renderView();
-      else if (route.name === 'home' && $('#reco-home')) { $('#reco-home').innerHTML = recoHomeInner(); markCurrent(); }
+      else if (route.name === 'home' && $('#reco-home')) { $('#reco-home').innerHTML = recoHomeInner(); refreshSlider(); markCurrent(); }
     });
 }
 
@@ -510,6 +513,83 @@ function viewForYou() {
       <div class="shelf">${recoData.artistPicks.map((t, i) => trackCard(t.id, i, 'play-reco', 'artist')).join('')}</div></section>` : ''}
     <p class="muted-note">Actualizado ${timeAgo(recoData.at)}${recoLoading ? '. Actualizando…' : '.'}</p>`;
 }
+
+// ---------- Carrusel "Lo que suena" ----------
+function ensurePopular() {
+  if (popularLoading || reco.popularIsFresh(popularData)) return;
+  popularLoading = true;
+  reco.loadPopular()
+    .then((d) => { popularData = d; remember(d.tracks); })
+    .catch((err) => console.warn('[populares]', err))
+    .finally(() => { popularLoading = false; refreshSlider(); });
+}
+
+function refreshSlider() {
+  const el = $('#slider-home');
+  if (route.name === 'home' && el) { el.innerHTML = sliderInner(); markCurrent(); }
+}
+
+function sliderSection() {
+  setTimeout(() => ensurePopular(), 0);
+  return `<section class="block slider-block" id="slider-home">${sliderInner()}</section>`;
+}
+
+function sliderInner() {
+  const { tracks, weight } = reco.composeSlider(popularData, recoData);
+  sliderList = tracks;
+  const pct = Math.round(weight * 100);
+  const head = `
+    <div class="block-head">
+      <h2>Lo que suena</h2>
+      <div class="slider-nav">
+        <button class="icon-btn" data-action="slide" data-dir="-1" aria-label="Anterior">${icon('chevron-left')}</button>
+        <button class="icon-btn" data-action="slide" data-dir="1" aria-label="Siguiente">${icon('chevron-right')}</button>
+      </div>
+    </div>
+    <p class="slider-note">${pct
+      ? `Éxitos del momento mezclados con lo que te gusta: ${pct} % hecho para ti`
+      : 'Éxitos del momento. Cuanto más escuches, más se parecerá a tus gustos.'}</p>`;
+  if (!tracks.length) {
+    return head + (popularLoading || !popularData
+      ? '<div class="loading"><span class="spinner"></span>Cargando lo que suena ahora…</div>'
+      : '<p class="muted-note">No se han podido cargar los éxitos ahora mismo.</p>');
+  }
+  return `${head}
+    <div class="slider" id="slider">
+      ${tracks.map((t, i) => `
+        <div class="slide" data-id="${t.id}">
+          ${img(t.id, 'slide-img')}
+          <span class="slide-shade"></span>
+          <span class="slide-tag ${t.personal ? 'is-personal' : ''}">${t.personal ? 'Para ti' : 'Popular'}</span>
+          <span class="slide-text">
+            <span class="slide-title">${esc(t.title)}</span>
+            <span class="slide-artist">${esc(t.artist || '')}</span>
+          </span>
+          ${EQ}
+          <button class="play-btn large slide-play" data-action="play-slide" data-index="${i}" aria-label="Reproducir ${esc(t.title)}">${icon('play')}</button>
+          <button class="stretched slide-hit" data-action="play-slide" data-index="${i}" aria-label="Reproducir ${esc(t.title)}"></button>
+        </div>`).join('')}
+    </div>`;
+}
+
+function moveSlider(dir) {
+  const el = $('#slider');
+  if (!el) return;
+  const slide = el.querySelector('.slide');
+  const step = slide ? slide.offsetWidth + 16 : el.clientWidth * 0.8;
+  const atEnd = el.scrollLeft + el.clientWidth >= el.scrollWidth - 8;
+  if (dir > 0 && atEnd) el.scrollTo({ left: 0, behavior: 'smooth' });
+  else el.scrollBy({ left: dir * step, behavior: 'smooth' });
+}
+
+// Avance automático cada 6 s (se pausa si lo tocas, si pasas el ratón o si prefieres menos movimiento)
+setInterval(() => {
+  const el = $('#slider');
+  if (!el || route.name !== 'home' || document.visibilityState !== 'visible') return;
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  if (el.matches(':hover') || Date.now() - sliderTouched < 15000) return;
+  moveSlider(1);
+}, 6000);
 
 // ---------- Buscar ----------
 function viewSearch(token) {
@@ -1247,6 +1327,8 @@ function bindEvents() {
       case 'play-playlist': { const p = store.getPlaylist(id); if (p) playIds(p.trackIds, 0, p.name); break; }
       case 'play-likes': playIds(store.get().likes, 0, 'Me gusta'); break;
       case 'play-remote': playRemote(el.dataset.list); break;
+      case 'play-slide': playIds(sliderList.map((t) => t.id), index, 'Lo que suena'); break;
+      case 'slide': sliderTouched = Date.now(); moveSlider(Number(el.dataset.dir)); break;
       case 'play-reco': {
         const list = el.dataset.list === 'artist' ? recoData?.artistPicks : recoData?.picks;
         if (list) playIds(list.map((t) => t.id), index, el.dataset.list === 'artist' ? `Más de ${recoData.topArtist}` : 'Recomendado para ti');
@@ -1350,6 +1432,8 @@ function bindEvents() {
   });
 
   $('#main').addEventListener('scroll', closeMenu, { passive: true });
+  document.addEventListener('pointerdown', (e) => { if (e.target.closest('#slider')) sliderTouched = Date.now(); });
+  document.addEventListener('wheel', (e) => { if (e.target.closest && e.target.closest('#slider')) sliderTouched = Date.now(); }, { passive: true });
 
   // --- Atajos de teclado (los mismos que en YouTube) ---
   document.addEventListener('keydown', (e) => {
@@ -1386,6 +1470,7 @@ async function init() {
   const session = store.loadSession();
   store.prune(session?.queue || []);
   rememberReco();
+  if (popularData) remember(popularData.tracks);
 
   route = parseHash();
   if (route.name === 'search') input().value = route.arg;

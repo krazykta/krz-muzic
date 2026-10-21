@@ -132,3 +132,80 @@ export async function buildRecommendations() {
   saveCache(data);
   return data;
 }
+
+// ================================================================
+// Carrusel "Lo que suena" de Inicio: éxitos del momento + lo que te gusta
+// ================================================================
+const POP_KEY = 'krz-muzic:popular';
+const POP_AGE = 12 * 60 * 60 * 1000; // los éxitos se refrescan cada 12 horas
+
+export function getCachedPopular() {
+  try { return JSON.parse(localStorage.getItem(POP_KEY)); } catch { return null; }
+}
+export const popularIsFresh = (p) => Boolean(p && Date.now() - p.at < POP_AGE && p.tracks && p.tracks.length);
+
+/** Éxitos actuales: buscamos la playlist de éxitos de España de este año y leemos sus canciones. */
+export async function loadPopular() {
+  const year = new Date().getFullYear();
+  let tracks = [];
+  try {
+    const lists = await catalog.searchPlaylists(`Éxitos España ${year}`);
+    for (const p of lists.slice(0, 3)) {
+      try {
+        const l = await catalog.getList(p.listId);
+        if (l.tracks.length >= 15) { tracks = l.tracks; break; }
+      } catch { /* probamos la siguiente playlist */ }
+    }
+  } catch { /* sin playlists: usamos el respaldo */ }
+  if (!tracks.length) tracks = await catalog.searchSongs(`éxitos ${year}`);
+  const data = { at: Date.now(), tracks: tracks.slice(0, 80) };
+  try { localStorage.setItem(POP_KEY, JSON.stringify(data)); } catch { /* sin espacio */ }
+  return data;
+}
+
+/**
+ * Cuánto pesan tus gustos en el carrusel (de 0 a 0,75).
+ * Cada escucha suma 1 y cada "Me gusta" 2; con 40 puntos se llega al máximo.
+ * Nunca pasa del 75 % para que siempre entren novedades.
+ */
+export function tasteWeight() {
+  const s = store.get();
+  const plays = Object.values((s.stats && s.stats.plays) || {}).reduce((a, b) => a + b, 0);
+  return Math.min(0.75, (plays + s.likes.length * 2) / 40);
+}
+
+/** Mezcla éxitos y recomendaciones según tasteWeight(). */
+export function composeSlider(popular, reco, count = 15) {
+  const weight = tasteWeight();
+  const { known } = tasteProfile();
+  const personal = reco ? [...(reco.picks || []), ...(reco.artistPicks || [])] : [];
+  const pop = (popular ? popular.tracks : []).filter((t) => !known.has(t.id));
+  const out = [];
+  const used = new Set();
+  let pi = 0;
+  let qi = 0;
+  let nPersonal = 0;
+  const take = (list, i) => { while (i < list.length && used.has(list[i].id)) i++; return i; };
+  while (out.length < count && (pi < personal.length || qi < pop.length)) {
+    let t = null;
+    let isPersonal = false;
+    // ¿Toca canción personal? Sí, si de momento llevamos menos proporción de la que marca weight
+    if (personal.length && weight > 0 && nPersonal / (out.length + 1) < weight) {
+      pi = take(personal, pi);
+      if (pi < personal.length) { t = personal[pi++]; isPersonal = true; }
+    }
+    if (!t) {
+      qi = take(pop, qi);
+      if (qi < pop.length) t = pop[qi++];
+    }
+    if (!t) {
+      pi = take(personal, pi);
+      if (pi < personal.length) { t = personal[pi++]; isPersonal = true; }
+    }
+    if (!t) break;
+    used.add(t.id);
+    if (isPersonal) nPersonal++;
+    out.push({ ...t, personal: isPersonal });
+  }
+  return { tracks: out, weight };
+}
