@@ -28,6 +28,7 @@ La app está terminada y limpia. Este documento resume qué hay y qué tener en 
   Si vuelve a haber cortes, se puede recuperar del historial de git (commit anterior a la limpieza).
 
 ## Si se retoma
+- Lista de cosas pendientes de arreglar: [SIGUIENTE-VERSION.md](SIGUIENTE-VERSION.md).
 - NewPipe se rompe cuando YouTube cambia: actualizar la versión en `android/app/build.gradle.kts`.
 - La clave de firma y sus contraseñas están en el repositorio (`android/app/krz-muzic.keystore` y
   `build.gradle.kts`). Moverlas a GitHub Secrets antes de compartir la app o hacer público el código.
