@@ -4,3 +4,4 @@ Cosas que arreglar más adelante (no ahora). Se van añadiendo según aparecen.
 
 1. **Buscador:** mientras suena una canción, el buscador pone una canción automáticamente
    y no deja buscar tranquilo sin cortar la que está sonando.
+2. **Artista:** poder tocar el nombre del artista para ver más canciones, álbumes, etc. suyos.
